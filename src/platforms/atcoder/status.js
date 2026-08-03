@@ -39,17 +39,14 @@ function trackVerdictCompletion() {
     const cols = latestRow.querySelectorAll("td");
     if (!cols || cols.length < 5) return false;
 
-    // Extract Submission ID
     const subIdLink = cols[0].querySelector("a") || cols[cols.length - 1].querySelector("a");
     const latestSubId = subIdLink ? subIdLink.href.split("/").pop() : "";
 
-    // Target status badge or score element cleanly
     const statusBadge = latestRow.querySelector(".label") || latestRow.querySelector("td.submission-score") || cols[4] || cols[5];
     let rawVerdict = statusBadge ? statusBadge.innerText.trim() : "";
 
     const vLower = rawVerdict.toLowerCase();
 
-    // Skip while still judging or in queue (WJ = Waiting for Judge, X/Y = test cases)
     if (
       !rawVerdict ||
       vLower.includes("wj") ||
@@ -82,7 +79,6 @@ function trackVerdictCompletion() {
           !rVLower.includes("/") &&
           !rVLower.includes("judging")
         ) {
-          // Read runtime/memory safely from trailing table cells
           const timeText = rCols[rCols.length - 2]?.innerText.trim() || "0 ms";
           const memoryText = rCols[rCols.length - 1]?.innerText.trim() || "0 KB";
 
@@ -115,9 +111,17 @@ function trackVerdictCompletion() {
 
       const currentSubRecord = extractedSubmissions.find((s) => s.submissionId === latestSubId) || extractedSubmissions[extractedSubmissions.length - 1];
 
+      // Extract contest short code directly from problem data or current URL
+      let contestName = problem.contestName || "";
+      if (!contestName) {
+        const match = window.location.pathname.match(/\/contests\/([^/]+)/i);
+        if (match) contestName = match[1].toUpperCase();
+      }
+
       const fullRecord = {
         platform: "AtCoder",
         submissionId: latestSubId,
+        contestName: contestName, // Added contest short code into background queue payload!
         attemptNumber: currentSubRecord ? currentSubRecord.attemptNumber : extractedSubmissions.length,
         when: currentSubRecord ? currentSubRecord.when : "",
         problemName: targetProblemName || problem.title || "Unknown Problem",

@@ -1,18 +1,24 @@
+function getAtCoderContestName() {
+  // Extract contest code directly from URL path
+  // Example: /contests/abc463/tasks/abc463_a  ->  ABC463
+  // Example: /contests/wtf2026/tasks/...     ->  WTF2026
+  const match = window.location.pathname.match(/\/contests\/([^/]+)/i);
+  if (match && match[1]) {
+    return match[1].toUpperCase();
+  }
+  return "";
+}
+
 function getFullProblemTitle() {
   const titleEl = document.querySelector("#main-container .h2") || document.querySelector("#main-container h2");
   if (!titleEl) return "";
 
   let rawTitle = titleEl.innerText.trim();
 
-  // Extract contest ID and task ID from URL
-  // Example: /contests/abc350/tasks/abc350_a
   const urlMatch = window.location.pathname.match(/\/contests\/([^/]+)\/tasks\/([^/]+)/i);
 
   if (urlMatch) {
-    const contestId = urlMatch[1];
     const taskId = urlMatch[2];
-
-    // Clean leading single letter prefix if present (e.g. "A - Title" -> "Title")
     const cleanTitle = rawTitle.replace(/^[A-Z0-9]\s*-\s*/, "");
     return `${taskId} - ${cleanTitle}`;
   }
@@ -25,8 +31,8 @@ function extractAndSaveProblemDetails() {
   if (!taskStatement) return;
 
   const fullTitle = getFullProblemTitle();
+  const contestName = getAtCoderContestName(); // Extract short code (e.g. ABC463)
 
-  // Extract limits text
   let timeLimit = "2 seconds";
   let memoryLimit = "1024 megabytes";
 
@@ -42,10 +48,8 @@ function extractAndSaveProblemDetails() {
     }
   }
 
-  // Focus on English content block if available, fallback to taskStatement
   const langEn = taskStatement.querySelector(".lang-en") || taskStatement;
 
-  // Extract Statement Paragraphs (skip section headers and sample blocks)
   const sections = Array.from(langEn.querySelectorAll(".part"));
   const statementParts = [];
   let inputSpec = "";
@@ -70,7 +74,6 @@ function extractAndSaveProblemDetails() {
 
   const statementParagraphs = statementParts.join("\n\n");
 
-  // Extract Sample Test Cases
   const sampleTests = [];
   const inputs = {};
   const outputs = {};
@@ -101,6 +104,7 @@ function extractAndSaveProblemDetails() {
   const problemData = {
     url: window.location.href,
     title: fullTitle,
+    contestName: contestName, // Added contest short code!
     timeLimit,
     memoryLimit,
     statementParagraphs,
@@ -112,7 +116,7 @@ function extractAndSaveProblemDetails() {
   };
 
   chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured AtCoder problem details for:", fullTitle);
+    console.log("[CP-GitSync] Captured AtCoder problem details for:", fullTitle, "in contest:", contestName);
   });
 }
 
