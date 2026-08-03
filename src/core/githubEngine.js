@@ -86,9 +86,16 @@ export async function processGitHubSync(data) {
   const cleanTitle = sanitizeTitle(data.problemName);
   const platform = data.platform || "Codeforces";
 
-  // STRICT GUARD: Apply subfolder nesting ONLY for AtCoder
+  // DYNAMIC ROUTING PER PLATFORM
   let folderPath = `${platform}/${cleanTitle}`;
-  if (platform.toLowerCase() === "atcoder" && data.contestName) {
+
+  if (platform.toLowerCase() === "hackerrank" && data.urlSubpath) {
+    // E.g. HackerRank/contests/gitabhu/challenges/find-the-game-winner
+    // E.g. HackerRank/challenges/java-stdin-and-stdout-1
+    // E.g. HackerRank/prep-kit/software-engineer/challenges/sample-problem
+    folderPath = `HackerRank/${data.urlSubpath}`;
+  } else if (platform.toLowerCase() === "atcoder" && data.contestName) {
+    // E.g. AtCoder/ABC463/A-16-9
     const cleanContest = sanitizeTitle(data.contestName);
     folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
   }
@@ -97,17 +104,23 @@ export async function processGitHubSync(data) {
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
 
-  // 1. Calculate next attempt number dynamically for LeetCode by reading directory (cache-busted)
+  // 1. Calculate next attempt number dynamically for LeetCode & HackerRank by reading directory
   let attemptNumber = data.attemptNumber || 1;
-  if (platform.toLowerCase() === "leetcode") {
+  const useFilesystemHistory =
+    platform.toLowerCase() === "leetcode" || platform.toLowerCase() === "hackerrank";
+
+  if (useFilesystemHistory) {
     try {
       const cacheBuster = Date.now();
-      const dirRes = await fetch(`https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`, { headers });
+      const dirRes = await fetch(
+        `https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`,
+        { headers }
+      );
       if (dirRes.ok) {
         const files = await dirRes.json();
         if (Array.isArray(files)) {
           let maxAttempt = 0;
-          files.forEach(f => {
+          files.forEach((f) => {
             const m = f.name.match(/_Attempt_(\d+)_/i);
             if (m) {
               const num = parseInt(m[1], 10);
@@ -143,7 +156,16 @@ export async function processGitHubSync(data) {
   }
 
   // 3. Re-render Problem-Level README.md
-  await syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, platform, data, data.timestamp || new Date().toLocaleString());
+  await syncProblemReadme(
+    headers,
+    repo,
+    branch,
+    folderPath,
+    cleanTitle,
+    platform,
+    data,
+    data.timestamp || new Date().toLocaleString()
+  );
 
   // 4. Update Root Dashboard
   await updateRootReadmeFromRepo(headers, repo, branch);
@@ -160,17 +182,21 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
 
   try {
     const cacheBuster = Date.now();
-    const res = await fetch(`https://api.github.com/repos/${repo}/contents/${readmePath}?ref=${branch}&t=${cacheBuster}`, { headers });
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${readmePath}?ref=${branch}&t=${cacheBuster}`,
+      { headers }
+    );
     if (res.ok) {
       existingReadme = await res.json();
 
-      // Parse existing timestamps from current README table
-      const bytes = Uint8Array.from(atob(existingReadme.content.replace(/\s/g, '')), c => c.charCodeAt(0));
+      const bytes = Uint8Array.from(atob(existingReadme.content.replace(/\s/g, "")), (c) =>
+        c.charCodeAt(0)
+      );
       const content = new TextDecoder().decode(bytes);
       const lines = content.split("\n");
 
-      lines.forEach(line => {
-        const parts = line.split("|").map(s => s.trim());
+      lines.forEach((line) => {
+        const parts = line.split("|").map((s) => s.trim());
         if (parts.length >= 6 && !isNaN(parseInt(parts[1], 10))) {
           const attempt = parseInt(parts[1], 10);
           const timeStr = parts[2];
@@ -185,22 +211,28 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
   let tableHeader = "";
   let tableRows = "";
 
-  if (platform.toLowerCase() === "leetcode") {
+  const isFilesystemPlatform =
+    platform.toLowerCase() === "leetcode" || platform.toLowerCase() === "hackerrank";
+
+  if (isFilesystemPlatform) {
     tableHeader = `| Attempt | Date & Time | Verdict | Language | File |
 | :---: | :---: | :---: | :---: | :---: |`;
 
     try {
       const cacheBuster = Date.now();
-      const dirRes = await fetch(`https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`, { headers });
+      const dirRes = await fetch(
+        `https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`,
+        { headers }
+      );
 
       if (dirRes.ok) {
         const files = await dirRes.json();
         if (Array.isArray(files)) {
           const attemptFiles = [];
 
-          files.forEach(f => {
+          files.forEach((f) => {
             if (f.name.toLowerCase() !== "readme.md") {
-              const match = f.name.match(/^(\d+)_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
+              const match = f.name.match(/^(.+)_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
               if (match) {
                 attemptFiles.push({
                   filename: f.name,
@@ -212,38 +244,42 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
             }
           });
 
-          // Sort attempts sequentially
           attemptFiles.sort((a, b) => a.attemptNumber - b.attemptNumber);
 
-          tableRows = attemptFiles.map(af => {
-            const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
-            const langName = extToLanguageName(af.ext);
-            const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
+          tableRows = attemptFiles
+            .map((af) => {
+              const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
+              const langName = extToLanguageName(af.ext);
+              const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
 
-            return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
-          }).join("\n");
+              return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
+            })
+            .join("\n");
         }
       }
     } catch (e) {
-      console.warn("Failed to read directory files for LeetCode README:", e);
+      console.warn(`Failed to read directory files for ${platform} README:`, e);
     }
   } else {
-    // --- OTHER PLATFORMS (CODEFORCES, ATCODER, ETC.) ---
+    // --- CODEFORCES, ATCODER, ETC. ---
     tableHeader = `| Attempt | Submission ID | Date & Time | Verdict | Runtime | Memory | Language | File |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |`;
 
     const submissions = data.allProblemSubmissions || [];
     const sortedSubmissions = [...submissions].sort((a, b) => a.attemptNumber - b.attemptNumber);
 
-    tableRows = sortedSubmissions.map((s) => {
-      const vAbbr = getVerdictAbbr(s.verdict);
-      const ext = getExtension(s.language);
-      const fName = `${s.submissionId}_Attempt_${s.attemptNumber}_${vAbbr}.${ext}`;
-      const isAC = s.verdict.toLowerCase().includes("accepted") || s.verdict.toLowerCase().includes("ok");
-      const verdictBadge = isAC ? "✅" : "❌";
+    tableRows = sortedSubmissions
+      .map((s) => {
+        const vAbbr = getVerdictAbbr(s.verdict);
+        const ext = getExtension(s.language);
+        const fName = `${s.submissionId}_Attempt_${s.attemptNumber}_${vAbbr}.${ext}`;
+        const isAC =
+          s.verdict.toLowerCase().includes("accepted") || s.verdict.toLowerCase().includes("ok");
+        const verdictBadge = isAC ? "✅" : "❌";
 
-      return `| ${s.attemptNumber} | ${s.submissionId} | ${s.when} | ${verdictBadge} ${s.verdict} | ${s.time || "N/A"} | ${s.memory || "N/A"} | ${s.language} | [\`${fName}\`](./${fName}) |`;
-    }).join("\n");
+        return `| ${s.attemptNumber} | ${s.submissionId} | ${s.when} | ${verdictBadge} ${s.verdict} | ${s.time || "N/A"} | ${s.memory || "N/A"} | ${s.language} | [\`${fName}\`](./${fName}) |`;
+      })
+      .join("\n");
   }
 
   const probDetails = data.problemDetails || {};
@@ -268,7 +304,11 @@ ${probDetails.statementParagraphs || "No statement captured."}
 ---
 
 ### 🧪 Sample Tests
-${(probDetails.sampleTests && probDetails.sampleTests.length > 0) ? probDetails.sampleTests.map((t, i) => `
+${
+  probDetails.sampleTests && probDetails.sampleTests.length > 0
+    ? probDetails.sampleTests
+        .map(
+          (t, i) => `
 #### Example ${i + 1}
 **Input:**
 \`\`\`
@@ -278,7 +318,11 @@ ${t.input}
 \`\`\`
 ${t.output}
 \`\`\`
-`).join("\n") : "_No sample test cases provided._"}
+`
+        )
+        .join("\n")
+    : "_No sample test cases provided._"
+}
 
 ${probDetails.note ? `--- \n### 💡 Note\n${probDetails.note}\n` : ""}
 
@@ -323,27 +367,31 @@ async function updateRootReadmeFromRepo(headers, repo, branch) {
 
   try {
     const cacheBuster = Date.now();
-    const treeRes = await fetch(`https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1&t=${cacheBuster}`, { headers });
+    const treeRes = await fetch(
+      `https://api.github.com/repos/${repo}/git/trees/${branch}?recursive=1&t=${cacheBuster}`,
+      { headers }
+    );
     if (treeRes.ok) {
       const treeData = await treeRes.json();
       const tree = treeData.tree || [];
 
-      platformList.forEach(p => {
+      platformList.forEach((p) => {
         const prefix = `${p.path}/`;
-        const codeFiles = tree.filter(item =>
-          item.type === "blob" &&
-          item.path.startsWith(prefix) &&
-          !item.path.endsWith("README.md")
+        const codeFiles = tree.filter(
+          (item) =>
+            item.type === "blob" &&
+            item.path.startsWith(prefix) &&
+            !item.path.endsWith("README.md")
         );
 
         const totalTrackedFiles = codeFiles.length;
         grandTotalFiles += totalTrackedFiles;
 
         const acProblemFolders = new Set();
-        codeFiles.forEach(f => {
+        codeFiles.forEach((f) => {
           if (f.path.includes("_AC.")) {
             const parts = f.path.split("/");
-            // Supports both flat (Platform/Problem/File) and nested (Platform/Contest/Problem/File)
+            // Supports arbitrary nested depths (HackerRank deep paths, AtCoder contest paths, etc.)
             if (parts.length >= 3) {
               const problemFolder = parts.slice(1, -1).join("/");
               acProblemFolders.add(problemFolder);
@@ -375,17 +423,22 @@ Automated syncing across platforms powered by **CP-GitSync**.
 ### 📁 Platform Directory
 | Platform | Folder Path | Unique Solved / Total Files Tracked |
 | :--- | :--- | :---: |
-${platformList.map(p => {
-  const pData = platformStats[p.name] || { solved: 0, files: 0 };
-  return `| **${p.name}** | [\`/${p.path}\`](./${p.path}) | ${pData.solved} / ${pData.files} |`;
-}).join("\n")}
+${platformList
+  .map((p) => {
+    const pData = platformStats[p.name] || { solved: 0, files: 0 };
+    return `| **${p.name}** | [\`/${p.path}\`](./${p.path}) | ${pData.solved} / ${pData.files} |`;
+  })
+  .join("\n")}
 `;
 
   const rootPath = "README.md";
   let existingRoot = null;
   try {
     const cacheBuster = Date.now();
-    const res = await fetch(`https://api.github.com/repos/${repo}/contents/${rootPath}?ref=${branch}&t=${cacheBuster}`, { headers });
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${rootPath}?ref=${branch}&t=${cacheBuster}`,
+      { headers }
+    );
     if (res.ok) {
       existingRoot = await res.json();
     }

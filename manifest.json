@@ -11,7 +11,8 @@
     "https://api.github.com/*",
     "https://codeforces.com/*",
     "https://atcoder.jp/*",
-    "https://leetcode.com/*"
+    "https://leetcode.com/*",
+    "https://www.hackerrank.com/*"
   ],
   "web_accessible_resources": [
     {
@@ -84,6 +85,20 @@
         "src/platforms/leetcode/graphql.js",
         "src/platforms/leetcode/submit.js",
         "src/platforms/leetcode/leetcode.js"
+      ],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://www.hackerrank.com/challenges/*",
+        "https://www.hackerrank.com/contests/*/challenges/*",
+        "https://www.hackerrank.com/prep-kit/*/challenges/*",
+        "https://www.hackerrank.com/domains/*"
+      ],
+      "js": [
+        "src/platforms/hackerrank/problem.js",
+        "src/platforms/hackerrank/submit.js",
+        "src/platforms/hackerrank/status.js"
       ],
       "css": ["styles/content.css"]
     }
