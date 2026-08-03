@@ -1,0 +1,94 @@
+{
+  "manifest_version": 3,
+  "name": "CP-GitSync",
+  "version": "1.0.0",
+  "description": "Automated cross-platform competitive programming sync engine.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://codeforces.com/*",
+    "https://atcoder.jp/*",
+    "https://leetcode.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/platforms/leetcode/inject.js"],
+      "matches": ["https://leetcode.com/*"]
+    }
+  ],
+  "background": {
+    "service_worker": "src/core/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://codeforces.com/problemset/problem/*",
+        "https://codeforces.com/contest/*/problem/*",
+        "https://codeforces.com/gym/*/problem/*"
+      ],
+      "js": ["src/platforms/codeforces/problem.js"],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://codeforces.com/contest/*/submit",
+        "https://codeforces.com/problemset/submit",
+        "https://codeforces.com/gym/*/submit"
+      ],
+      "js": ["src/platforms/codeforces/submit.js"],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://codeforces.com/contest/*/status*",
+        "https://codeforces.com/problemset/status*",
+        "https://codeforces.com/contest/*/my*",
+        "https://codeforces.com/gym/*/status*"
+      ],
+      "js": ["src/platforms/codeforces/status.js"],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://atcoder.jp/contests/*/tasks/*"
+      ],
+      "js": [
+        "src/platforms/atcoder/problem.js",
+        "src/platforms/atcoder/submit.js"
+      ],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://atcoder.jp/contests/*/submit*"
+      ],
+      "js": ["src/platforms/atcoder/submit.js"],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://atcoder.jp/contests/*/submissions*"
+      ],
+      "js": ["src/platforms/atcoder/status.js"],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://leetcode.com/problems/*"
+      ],
+      "js": [
+        "src/platforms/leetcode/graphql.js",
+        "src/platforms/leetcode/submit.js",
+        "src/platforms/leetcode/leetcode.js"
+      ],
+      "css": ["styles/content.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}
