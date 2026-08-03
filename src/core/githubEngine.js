@@ -61,9 +61,8 @@ function abbrToVerdictDisplay(abbr) {
 }
 
 function sanitizeTitle(rawName) {
-  const match = rawName.match(/(\d+\s*[A-Z\d]+[\s\S]*)/i);
-  let cleaned = match ? match[1] : rawName;
-  return cleaned
+  if (!rawName) return "Problem";
+  return String(rawName)
     .replace(/[^a-zA-Z0-9\s-]/g, "")
     .trim()
     .replace(/\s+/g, "-");
@@ -86,7 +85,14 @@ export async function processGitHubSync(data) {
 
   const cleanTitle = sanitizeTitle(data.problemName);
   const platform = data.platform || "Codeforces";
-  const folderPath = `${platform}/${cleanTitle}`;
+
+  // STRICT GUARD: Apply subfolder nesting ONLY for AtCoder
+  let folderPath = `${platform}/${cleanTitle}`;
+  if (platform.toLowerCase() === "atcoder" && data.contestName) {
+    const cleanContest = sanitizeTitle(data.contestName);
+    folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
+  }
+
   const submissionId = data.submissionId;
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
@@ -165,7 +171,6 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
 
       lines.forEach(line => {
         const parts = line.split("|").map(s => s.trim());
-        // For LeetCode table: | Attempt | Date & Time | Verdict | Language | File |
         if (parts.length >= 6 && !isNaN(parseInt(parts[1], 10))) {
           const attempt = parseInt(parts[1], 10);
           const timeStr = parts[2];
@@ -213,8 +218,6 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
           tableRows = attemptFiles.map(af => {
             const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
             const langName = extToLanguageName(af.ext);
-
-            // Retain original timestamp if it existed in previous README, otherwise assign currentTimestamp
             const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
 
             return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
@@ -340,8 +343,10 @@ async function updateRootReadmeFromRepo(headers, repo, branch) {
         codeFiles.forEach(f => {
           if (f.path.includes("_AC.")) {
             const parts = f.path.split("/");
-            if (parts.length >= 2) {
-              acProblemFolders.add(parts[1]);
+            // Supports both flat (Platform/Problem/File) and nested (Platform/Contest/Problem/File)
+            if (parts.length >= 3) {
+              const problemFolder = parts.slice(1, -1).join("/");
+              acProblemFolders.add(problemFolder);
             }
           }
         });

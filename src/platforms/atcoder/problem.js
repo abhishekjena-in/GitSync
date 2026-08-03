@@ -1,26 +1,26 @@
 function getAtCoderContestName() {
-  // Extract contest code directly from URL path
-  // Example: /contests/abc463/tasks/abc463_a  ->  ABC463
-  // Example: /contests/wtf2026/tasks/...     ->  WTF2026
+  // Matches /contests/ahc065, /contests/abc463, etc.
   const match = window.location.pathname.match(/\/contests\/([^/]+)/i);
   if (match && match[1]) {
-    return match[1].toUpperCase();
+    return match[1].toUpperCase(); // Returns 'AHC065', 'ABC463', etc.
   }
   return "";
 }
 
 function getFullProblemTitle() {
   const titleEl = document.querySelector("#main-container .h2") || document.querySelector("#main-container h2");
-  if (!titleEl) return "";
+  if (!titleEl) return "Problem";
 
   let rawTitle = titleEl.innerText.trim();
 
-  const urlMatch = window.location.pathname.match(/\/contests\/([^/]+)\/tasks\/([^/]+)/i);
-
+  // If title is like "A - Conveyor Design", return as is
+  // If it's raw, prepend task letter cleanly
+  const urlMatch = window.location.pathname.match(/\/tasks\/[^_]+_([a-z0-9]+)/i);
   if (urlMatch) {
-    const taskId = urlMatch[2];
-    const cleanTitle = rawTitle.replace(/^[A-Z0-9]\s*-\s*/, "");
-    return `${taskId} - ${cleanTitle}`;
+    const taskLetter = urlMatch[1].toUpperCase(); // e.g., 'A'
+    if (!rawTitle.toUpperCase().startsWith(taskLetter)) {
+      rawTitle = `${taskLetter} - ${rawTitle}`;
+    }
   }
 
   return rawTitle;
@@ -31,7 +31,7 @@ function extractAndSaveProblemDetails() {
   if (!taskStatement) return;
 
   const fullTitle = getFullProblemTitle();
-  const contestName = getAtCoderContestName(); // Extract short code (e.g. ABC463)
+  const contestName = getAtCoderContestName();
 
   let timeLimit = "2 seconds";
   let memoryLimit = "1024 megabytes";
@@ -104,7 +104,7 @@ function extractAndSaveProblemDetails() {
   const problemData = {
     url: window.location.href,
     title: fullTitle,
-    contestName: contestName, // Added contest short code!
+    contestName: contestName, // Safely captured (e.g. AHC065)
     timeLimit,
     memoryLimit,
     statementParagraphs,
@@ -116,7 +116,7 @@ function extractAndSaveProblemDetails() {
   };
 
   chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured AtCoder problem details for:", fullTitle, "in contest:", contestName);
+    console.log("[CP-GitSync] Captured AtCoder problem details for:", fullTitle, "Contest:", contestName);
   });
 }
 
