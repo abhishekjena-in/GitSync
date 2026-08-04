@@ -91,20 +91,23 @@ export async function processGitHubSync(data) {
 
   if (platform.toLowerCase() === "hackerrank" && data.urlSubpath) {
     folderPath = `HackerRank/${data.urlSubpath}`;
+  } else if (platform.toLowerCase() === "codechef" && data.urlSubpath) {
+    folderPath = `CodeChef/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "atcoder" && data.contestName) {
     const cleanContest = sanitizeTitle(data.contestName);
     folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
   }
 
-  // Ensure submissionId is clean (e.g., hr_1785803040005)
   const submissionId = data.submissionId;
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
 
-  // 1. Calculate next attempt number dynamically for LeetCode & HackerRank
+  // 1. Calculate next attempt number dynamically for LeetCode, HackerRank & CodeChef
   let attemptNumber = data.attemptNumber || 1;
   const useFilesystemHistory =
-    platform.toLowerCase() === "leetcode" || platform.toLowerCase() === "hackerrank";
+    platform.toLowerCase() === "leetcode" ||
+    platform.toLowerCase() === "hackerrank" ||
+    platform.toLowerCase() === "codechef";
 
   if (useFilesystemHistory) {
     try {
@@ -118,11 +121,9 @@ export async function processGitHubSync(data) {
         if (Array.isArray(files)) {
           let maxAttempt = 0;
           files.forEach((f) => {
-            // Strictly match '_Attempt_X_' where X is the sequence integer
             const m = f.name.match(/_Attempt_(\d+)_/i);
             if (m) {
               const num = parseInt(m[1], 10);
-              // Ignore any accidental timestamp matches (> 1,000,000)
               if (num < 1000000 && num > maxAttempt) {
                 maxAttempt = num;
               }
@@ -213,7 +214,9 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
   let tableRows = "";
 
   const isFilesystemPlatform =
-    platform.toLowerCase() === "leetcode" || platform.toLowerCase() === "hackerrank";
+    platform.toLowerCase() === "leetcode" ||
+    platform.toLowerCase() === "hackerrank" ||
+    platform.toLowerCase() === "codechef";
 
   if (isFilesystemPlatform) {
     tableHeader = `| Attempt | Date & Time | Verdict | Language | File |
@@ -233,7 +236,6 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
 
           files.forEach((f) => {
             if (f.name.toLowerCase() !== "readme.md") {
-              // Parse strictly ending with _Attempt_<X>_<VERDICT>.<ext>
               const match = f.name.match(/_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
               if (match) {
                 const parsedAttempt = parseInt(match[1], 10);

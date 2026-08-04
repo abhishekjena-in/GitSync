@@ -12,7 +12,8 @@
     "https://codeforces.com/*",
     "https://atcoder.jp/*",
     "https://leetcode.com/*",
-    "https://www.hackerrank.com/*"
+    "https://www.hackerrank.com/*",
+    "https://www.codechef.com/*"
   ],
   "web_accessible_resources": [
     {
@@ -99,6 +100,19 @@
         "src/platforms/hackerrank/problem.js",
         "src/platforms/hackerrank/submit.js",
         "src/platforms/hackerrank/status.js"
+      ],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://www.codechef.com/problems/*",
+        "https://www.codechef.com/practice/*",
+        "https://www.codechef.com/*/problems/*"
+      ],
+      "js": [
+        "src/platforms/codechef/problem.js",
+        "src/platforms/codechef/submit.js",
+        "src/platforms/codechef/status.js"
       ],
       "css": ["styles/content.css"]
     }
