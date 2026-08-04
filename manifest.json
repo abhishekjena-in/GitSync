@@ -13,7 +13,9 @@
     "https://atcoder.jp/*",
     "https://leetcode.com/*",
     "https://www.hackerrank.com/*",
-    "https://www.codechef.com/*"
+    "https://www.codechef.com/*",
+    "https://www.geeksforgeeks.org/*",
+    "https://practice.geeksforgeeks.org/*"
   ],
   "web_accessible_resources": [
     {
@@ -113,6 +115,18 @@
         "src/platforms/codechef/problem.js",
         "src/platforms/codechef/submit.js",
         "src/platforms/codechef/status.js"
+      ],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://www.geeksforgeeks.org/problems/*",
+        "https://practice.geeksforgeeks.org/problems/*"
+      ],
+      "js": [
+        "src/platforms/geeksforgeeks/problem.js",
+        "src/platforms/geeksforgeeks/submit.js",
+        "src/platforms/geeksforgeeks/status.js"
       ],
       "css": ["styles/content.css"]
     }

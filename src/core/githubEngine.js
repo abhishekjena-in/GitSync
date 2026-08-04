@@ -39,7 +39,7 @@ function getVerdictAbbr(verdict) {
   if (!verdict) return "WA";
   const v = String(verdict).trim().toUpperCase();
 
-  if (v.includes("100") || v === "AC" || v.includes("ACCEPTED") || v.includes("OK")) return "AC";
+  if (v.includes("100") || v === "AC" || v.includes("ACCEPTED") || v.includes("OK") || v.includes("CORRECT")) return "AC";
   if (v === "TLE" || v.includes("TIME LIMIT")) return "TLE";
   if (v === "MLE" || v.includes("MEMORY LIMIT")) return "MLE";
   if (v === "RE" || v === "RTE" || v.includes("RUNTIME")) return "RTE";
@@ -93,6 +93,8 @@ export async function processGitHubSync(data) {
     folderPath = `HackerRank/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "codechef" && data.urlSubpath) {
     folderPath = `CodeChef/${data.urlSubpath}`;
+  } else if (platform.toLowerCase() === "geeksforgeeks" && data.urlSubpath) {
+    folderPath = `GeeksforGeeks/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "atcoder" && data.contestName) {
     const cleanContest = sanitizeTitle(data.contestName);
     folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
@@ -102,12 +104,13 @@ export async function processGitHubSync(data) {
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
 
-  // 1. Calculate next attempt number dynamically for LeetCode, HackerRank & CodeChef
+  // 1. Calculate next attempt number dynamically
   let attemptNumber = data.attemptNumber || 1;
   const useFilesystemHistory =
     platform.toLowerCase() === "leetcode" ||
     platform.toLowerCase() === "hackerrank" ||
-    platform.toLowerCase() === "codechef";
+    platform.toLowerCase() === "codechef" ||
+    platform.toLowerCase() === "geeksforgeeks";
 
   if (useFilesystemHistory) {
     try {
@@ -156,6 +159,14 @@ export async function processGitHubSync(data) {
     const errorData = await pushRes.json();
     throw new Error(`Failed to push code file: ${errorData.message}`);
   }
+
+  // FORCE INJECT CURRENT ATTEMPT TO BYPASS GITHUB API CACHE DELAY
+  data.latestAttemptInject = {
+    filename: fileName,
+    attemptNumber: attemptNumber,
+    verdictAbbr: verdictAbbr,
+    ext: ext
+  };
 
   // 3. Re-render Problem-Level README.md
   await syncProblemReadme(
@@ -216,11 +227,14 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
   const isFilesystemPlatform =
     platform.toLowerCase() === "leetcode" ||
     platform.toLowerCase() === "hackerrank" ||
-    platform.toLowerCase() === "codechef";
+    platform.toLowerCase() === "codechef" ||
+    platform.toLowerCase() === "geeksforgeeks";
 
   if (isFilesystemPlatform) {
     tableHeader = `| Attempt | Date & Time | Verdict | Language | File |
 | :---: | :---: | :---: | :---: | :---: |`;
+
+    const attemptFiles = [];
 
     try {
       const cacheBuster = Date.now();
@@ -232,8 +246,6 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
       if (dirRes.ok) {
         const files = await dirRes.json();
         if (Array.isArray(files)) {
-          const attemptFiles = [];
-
           files.forEach((f) => {
             if (f.name.toLowerCase() !== "readme.md") {
               const match = f.name.match(/_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
@@ -250,23 +262,32 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
               }
             }
           });
-
-          attemptFiles.sort((a, b) => a.attemptNumber - b.attemptNumber);
-
-          tableRows = attemptFiles
-            .map((af) => {
-              const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
-              const langName = extToLanguageName(af.ext);
-              const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
-
-              return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
-            })
-            .join("\n");
         }
       }
     } catch (e) {
       console.warn(`Failed to read directory files for ${platform} README:`, e);
     }
+
+    // PRECISE OVERRIDE: Force inject the freshly pushed attempt if GitHub API cache missed it (Fixes 1st attempt missing bug)
+    if (data.latestAttemptInject) {
+      const exists = attemptFiles.some((af) => af.attemptNumber === data.latestAttemptInject.attemptNumber);
+      if (!exists) {
+        attemptFiles.push(data.latestAttemptInject);
+      }
+    }
+
+    attemptFiles.sort((a, b) => a.attemptNumber - b.attemptNumber);
+
+    tableRows = attemptFiles
+      .map((af) => {
+        const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
+        const langName = extToLanguageName(af.ext);
+        const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
+
+        return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
+      })
+      .join("\n");
+
   } else {
     // --- CODEFORCES, ATCODER, ETC. ---
     tableHeader = `| Attempt | Submission ID | Date & Time | Verdict | Runtime | Memory | Language | File |
