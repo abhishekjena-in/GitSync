@@ -25,6 +25,24 @@ function getHackerRankUrlSubpath() {
   return segments.join("/");
 }
 
+function getSectionText(parentEl, className) {
+  const container = parentEl ? parentEl.querySelector(`.${className}`) : null;
+  if (!container) return "";
+
+  // Select all paragraphs, list items, or pre blocks inside the target section
+  const nodes = container.querySelectorAll(".hackdown-content p, .hackdown-content li, .hackdown-content pre");
+  if (!nodes || nodes.length === 0) return container.textContent.trim();
+
+  return Array.from(nodes)
+    .map((node) => {
+      const text = node.textContent.trim();
+      if (node.tagName.toLowerCase() === "li") return `* ${text}`;
+      return text;
+    })
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
 function extractAndSaveHackerRankProblemDetails() {
   const titleEl =
     document.querySelector(".ui-icon-label-page") ||
@@ -36,30 +54,36 @@ function extractAndSaveHackerRankProblemDetails() {
   const rawTitle = titleEl ? titleEl.textContent.trim() : document.title;
   const urlSubpath = getHackerRankUrlSubpath();
 
-  const statementEl =
+  const challengeBody =
     document.querySelector(".challenge-body-html") ||
     document.querySelector(".problem-statement") ||
     document.querySelector(".challenge-description");
 
-  let statementText = "Refer to problem description on HackerRank.";
-  if (statementEl) {
-    statementText = Array.from(statementEl.querySelectorAll("p, pre"))
-      .map((el) => el.textContent.trim())
-      .filter((text) => text.length > 0)
-      .join("\n\n");
-  }
+  // 1. Extract Main Problem Statement
+  let statementText = getSectionText(challengeBody, "challenge_problem_statement");
+  if (!statementText) statementText = "Refer to problem description on HackerRank.";
 
-  // Extract Sample Test Cases from HackerRank challenge page
+  // 2. Extract Input Format, Constraints, and Output Format cleanly
+  const inputSpec = getSectionText(challengeBody, "challenge_input_format") || "Standard Input";
+  const constraintsText = getSectionText(challengeBody, "challenge_constraints");
+  const outputSpec = getSectionText(challengeBody, "challenge_output_format") || "Standard Output";
+
+  // 3. Extract Sample Inputs & Outputs
   const sampleTests = [];
-  const challengeBody = document.querySelector(".challenge-body-html");
   if (challengeBody) {
-    const preBlocks = Array.from(challengeBody.querySelectorAll("pre"));
-    // Typically sample input & output are adjacent pre blocks under Sample Input / Sample Output headers
-    for (let i = 0; i < preBlocks.length - 1; i += 2) {
-      const inputVal = preBlocks[i].textContent.trim();
-      const outputVal = preBlocks[i + 1].textContent.trim();
-      if (inputVal && outputVal) {
-        sampleTests.push({ input: inputVal, output: outputVal });
+    const sampleInputBlocks = challengeBody.querySelectorAll(".challenge_sample_input");
+    const sampleOutputBlocks = challengeBody.querySelectorAll(".challenge_sample_output");
+
+    const count = Math.min(sampleInputBlocks.length, sampleOutputBlocks.length);
+    for (let i = 0; i < count; i++) {
+      const inPre = sampleInputBlocks[i].querySelector("pre");
+      const outPre = sampleOutputBlocks[i].querySelector("pre");
+
+      const inVal = inPre ? inPre.textContent.trim() : sampleInputBlocks[i].textContent.trim();
+      const outVal = outPre ? outPre.textContent.trim() : sampleOutputBlocks[i].textContent.trim();
+
+      if (inVal && outVal) {
+        sampleTests.push({ input: inVal, output: outVal });
       }
     }
   }
@@ -71,15 +95,15 @@ function extractAndSaveHackerRankProblemDetails() {
     timeLimit: "N/A",
     memoryLimit: "N/A",
     statementParagraphs: statementText,
-    inputSpec: "Standard Input",
-    outputSpec: "Standard Output",
+    inputSpec: inputSpec,
+    outputSpec: outputSpec,
     sampleTests: sampleTests,
-    note: "",
+    note: constraintsText ? `**Constraints:**\n${constraintsText}` : "",
     updatedAt: new Date().toISOString()
   };
 
   chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured HackerRank details & sample cases for:", rawTitle);
+    console.log("[CP-GitSync] Captured pristine HackerRank details for:", rawTitle);
   });
 }
 

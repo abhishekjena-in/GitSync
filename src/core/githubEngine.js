@@ -90,21 +90,18 @@ export async function processGitHubSync(data) {
   let folderPath = `${platform}/${cleanTitle}`;
 
   if (platform.toLowerCase() === "hackerrank" && data.urlSubpath) {
-    // E.g. HackerRank/contests/gitabhu/challenges/find-the-game-winner
-    // E.g. HackerRank/challenges/java-stdin-and-stdout-1
-    // E.g. HackerRank/prep-kit/software-engineer/challenges/sample-problem
     folderPath = `HackerRank/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "atcoder" && data.contestName) {
-    // E.g. AtCoder/ABC463/A-16-9
     const cleanContest = sanitizeTitle(data.contestName);
     folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
   }
 
+  // Ensure submissionId is clean (e.g., hr_1785803040005)
   const submissionId = data.submissionId;
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
 
-  // 1. Calculate next attempt number dynamically for LeetCode & HackerRank by reading directory
+  // 1. Calculate next attempt number dynamically for LeetCode & HackerRank
   let attemptNumber = data.attemptNumber || 1;
   const useFilesystemHistory =
     platform.toLowerCase() === "leetcode" || platform.toLowerCase() === "hackerrank";
@@ -121,10 +118,14 @@ export async function processGitHubSync(data) {
         if (Array.isArray(files)) {
           let maxAttempt = 0;
           files.forEach((f) => {
+            // Strictly match '_Attempt_X_' where X is the sequence integer
             const m = f.name.match(/_Attempt_(\d+)_/i);
             if (m) {
               const num = parseInt(m[1], 10);
-              if (num > maxAttempt) maxAttempt = num;
+              // Ignore any accidental timestamp matches (> 1,000,000)
+              if (num < 1000000 && num > maxAttempt) {
+                maxAttempt = num;
+              }
             }
           });
           attemptNumber = maxAttempt + 1;
@@ -232,14 +233,18 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
 
           files.forEach((f) => {
             if (f.name.toLowerCase() !== "readme.md") {
-              const match = f.name.match(/^(.+)_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
+              // Parse strictly ending with _Attempt_<X>_<VERDICT>.<ext>
+              const match = f.name.match(/_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
               if (match) {
-                attemptFiles.push({
-                  filename: f.name,
-                  attemptNumber: parseInt(match[2], 10),
-                  verdictAbbr: match[3],
-                  ext: match[4]
-                });
+                const parsedAttempt = parseInt(match[1], 10);
+                if (parsedAttempt < 1000000) {
+                  attemptFiles.push({
+                    filename: f.name,
+                    attemptNumber: parsedAttempt,
+                    verdictAbbr: match[2],
+                    ext: match[3]
+                  });
+                }
               }
             }
           });
@@ -391,7 +396,6 @@ async function updateRootReadmeFromRepo(headers, repo, branch) {
         codeFiles.forEach((f) => {
           if (f.path.includes("_AC.")) {
             const parts = f.path.split("/");
-            // Supports arbitrary nested depths (HackerRank deep paths, AtCoder contest paths, etc.)
             if (parts.length >= 3) {
               const problemFolder = parts.slice(1, -1).join("/");
               acProblemFolders.add(problemFolder);

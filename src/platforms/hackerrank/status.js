@@ -31,7 +31,6 @@ function extractHackerRankVerdict() {
 
   // 3. Check test case icons for failure (Wrong Answer)
   const failedTab = document.querySelector(".tab-item-color-error");
-  const passedTab = document.querySelector(".tab-item-color-success");
   if (failedTab && !document.querySelector(".congrats-wrapper")) {
     return "Wrong Answer";
   }
@@ -41,7 +40,7 @@ function extractHackerRankVerdict() {
   if (genericStatus) {
     const raw = genericStatus.textContent.trim().toLowerCase();
     if (raw.includes("processing") || raw.includes("queued") || raw.includes("running") || raw.includes("started")) {
-      return null; // Still evaluating
+      return null;
     }
     if (raw.includes("accepted")) return "Accepted";
   }
@@ -49,48 +48,62 @@ function extractHackerRankVerdict() {
   return null;
 }
 
+const processedSubmissionIds = new Set();
+let isCurrentlySyncing = false;
+
 function trackHackerRankVerdictCompletion() {
   const targetNode = document.body;
   if (!targetNode) return;
 
-  let hasSynced = false;
-
   const observer = new MutationObserver(() => {
-    if (hasSynced) return;
+    if (isCurrentlySyncing) return;
 
     const finalVerdict = extractHackerRankVerdict();
-    if (!finalVerdict) return; // Still evaluating or no verdict element rendered yet
+    if (!finalVerdict) return;
 
-    hasSynced = true; // Lock to prevent duplicate calls
+    chrome.storage.local.get(
+      ["pending_submission", "current_problem", "all_submissions", "hackerrank_verdict_processed"],
+      (res) => {
+        const pending = res.pending_submission || {};
+        const subId = pending.submissionId || `hr_${pending.timestamp || Date.now()}`;
 
-    chrome.storage.local.get(["pending_submission", "current_problem", "all_submissions"], (res) => {
-      const pending = res.pending_submission || {};
-      const problem = res.current_problem || {};
-      const history = res.all_submissions || [];
+        if (res.hackerrank_verdict_processed || processedSubmissionIds.has(subId) || isCurrentlySyncing) {
+          return;
+        }
 
-      const subId = `hr_${Date.now()}`;
+        // SYNCHRONOUS LOCK
+        isCurrentlySyncing = true;
+        processedSubmissionIds.add(subId);
 
-      const fullRecord = {
-        platform: "HackerRank",
-        submissionId: subId,
-        urlSubpath: problem.urlSubpath || "",
-        problemName: problem.title || "Unknown Problem",
-        language: pending.language || "Source Code",
-        verdict: finalVerdict, // Exactly 'Accepted', 'Compilation Error', 'Runtime Error', or 'Wrong Answer'
-        sourceCode: pending.sourceCode || "// Captured from HackerRank submission",
-        problemDetails: problem,
-        capturedAt: new Date().toISOString()
-      };
+        chrome.storage.local.set({ hackerrank_verdict_processed: true }, () => {
+          const problem = res.current_problem || {};
+          const history = res.all_submissions || [];
 
-      console.log("[CP-GitSync] Extracted Final HackerRank Verdict:", finalVerdict);
+          const fullRecord = {
+            platform: "HackerRank",
+            submissionId: subId,
+            urlSubpath: problem.urlSubpath || "",
+            problemName: problem.title || "Unknown Problem",
+            language: pending.language || "Source Code",
+            verdict: finalVerdict,
+            sourceCode: pending.sourceCode || "// Captured from HackerRank submission",
+            problemDetails: problem,
+            capturedAt: new Date().toISOString()
+          };
 
-      history.push(fullRecord);
-      chrome.storage.local.set({ all_submissions: history }, () => {
-        chrome.runtime.sendMessage({ action: "SYNC_TO_GITHUB", data: fullRecord });
-      });
-    });
+          console.log("[CP-GitSync] Syncing payload to background:", subId, finalVerdict);
 
-    observer.disconnect();
+          history.push(fullRecord);
+          chrome.storage.local.set({ all_submissions: history }, () => {
+            chrome.runtime.sendMessage({ action: "SYNC_TO_GITHUB", data: fullRecord });
+
+            setTimeout(() => {
+              isCurrentlySyncing = false;
+            }, 1500);
+          });
+        });
+      }
+    );
   });
 
   observer.observe(targetNode, { childList: true, subtree: true, characterData: true });
