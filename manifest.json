@@ -5,6 +5,7 @@
   "description": "Automated cross-platform competitive programming sync engine.",
   "permissions": [
     "storage",
+    "tabs",
     "activeTab"
   ],
   "host_permissions": [
@@ -15,12 +16,19 @@
     "https://www.hackerrank.com/*",
     "https://www.codechef.com/*",
     "https://www.geeksforgeeks.org/*",
-    "https://practice.geeksforgeeks.org/*"
+    "https://practice.geeksforgeeks.org/*",
+    "https://www.guvi.in/*"
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/platforms/leetcode/inject.js"],
-      "matches": ["https://leetcode.com/*"]
+      "resources": [
+        "src/platforms/leetcode/inject.js",
+        "src/platforms/codekata/inject.js"
+      ],
+      "matches": [
+        "https://leetcode.com/*",
+        "https://www.guvi.in/*"
+      ]
     }
   ],
   "background": {
@@ -34,7 +42,7 @@
         "https://codeforces.com/contest/*/problem/*",
         "https://codeforces.com/gym/*/problem/*"
       ],
-      "js": ["src/platforms/codeforces/problem.js"],
+      "js": ["src/utils/uiToast.js", "src/platforms/codeforces/problem.js"],
       "css": ["styles/content.css"]
     },
     {
@@ -43,7 +51,7 @@
         "https://codeforces.com/problemset/submit",
         "https://codeforces.com/gym/*/submit"
       ],
-      "js": ["src/platforms/codeforces/submit.js"],
+      "js": ["src/utils/uiToast.js", "src/platforms/codeforces/submit.js"],
       "css": ["styles/content.css"]
     },
     {
@@ -53,7 +61,7 @@
         "https://codeforces.com/contest/*/my*",
         "https://codeforces.com/gym/*/status*"
       ],
-      "js": ["src/platforms/codeforces/status.js"],
+      "js": ["src/utils/uiToast.js", "src/platforms/codeforces/status.js"],
       "css": ["styles/content.css"]
     },
     {
@@ -61,6 +69,7 @@
         "https://atcoder.jp/contests/*/tasks/*"
       ],
       "js": [
+        "src/utils/uiToast.js",
         "src/platforms/atcoder/problem.js",
         "src/platforms/atcoder/submit.js"
       ],
@@ -70,14 +79,14 @@
       "matches": [
         "https://atcoder.jp/contests/*/submit*"
       ],
-      "js": ["src/platforms/atcoder/submit.js"],
+      "js": ["src/utils/uiToast.js", "src/platforms/atcoder/submit.js"],
       "css": ["styles/content.css"]
     },
     {
       "matches": [
         "https://atcoder.jp/contests/*/submissions*"
       ],
-      "js": ["src/platforms/atcoder/status.js"],
+      "js": ["src/utils/uiToast.js", "src/platforms/atcoder/status.js"],
       "css": ["styles/content.css"]
     },
     {
@@ -85,6 +94,7 @@
         "https://leetcode.com/problems/*"
       ],
       "js": [
+        "src/utils/uiToast.js",
         "src/platforms/leetcode/graphql.js",
         "src/platforms/leetcode/submit.js",
         "src/platforms/leetcode/leetcode.js"
@@ -99,6 +109,7 @@
         "https://www.hackerrank.com/domains/*"
       ],
       "js": [
+        "src/utils/uiToast.js",
         "src/platforms/hackerrank/problem.js",
         "src/platforms/hackerrank/submit.js",
         "src/platforms/hackerrank/status.js"
@@ -112,6 +123,7 @@
         "https://www.codechef.com/*/problems/*"
       ],
       "js": [
+        "src/utils/uiToast.js",
         "src/platforms/codechef/problem.js",
         "src/platforms/codechef/submit.js",
         "src/platforms/codechef/status.js"
@@ -124,9 +136,22 @@
         "https://practice.geeksforgeeks.org/problems/*"
       ],
       "js": [
+        "src/utils/uiToast.js",
         "src/platforms/geeksforgeeks/problem.js",
         "src/platforms/geeksforgeeks/submit.js",
         "src/platforms/geeksforgeeks/status.js"
+      ],
+      "css": ["styles/content.css"]
+    },
+    {
+      "matches": [
+        "https://www.guvi.in/code-kata/*"
+      ],
+      "js": [
+        "src/utils/uiToast.js",
+        "src/platforms/codekata/problem.js",
+        "src/platforms/codekata/submit.js",
+        "src/platforms/codekata/status.js"
       ],
       "css": ["styles/content.css"]
     }

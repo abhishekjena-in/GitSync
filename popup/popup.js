@@ -1,3 +1,5 @@
+// popup/popup.js
+
 document.addEventListener("DOMContentLoaded", () => {
   const patInput = document.getElementById("githubPat");
   const repoInput = document.getElementById("githubRepo");
@@ -16,9 +18,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   saveBtn.addEventListener("click", async () => {
     const pat = patInput.value.trim();
-    const repo = repoInput.value.trim();
+    let repo = repoInput.value.trim();
     const branch = branchInput.value.trim() || "main";
     let gistId = gistInput.value.trim();
+
+    // Clean URL prefixes if user pasted full repo URL
+    repo = repo.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").trim().replace(/^\/+|\/+$/g, "");
 
     if (!pat || !repo) {
       statusMsg.className = "status-msg error";
@@ -30,7 +35,10 @@ document.addEventListener("DOMContentLoaded", () => {
     statusMsg.innerText = "Validating GitHub permissions...";
 
     try {
-      const headers = { "Authorization": `token ${pat}`, "Accept": "application/vnd.github.v3+json" };
+      const headers = { 
+        "Authorization": `Bearer ${pat}`, 
+        "Accept": "application/vnd.github.v3+json" 
+      };
 
       // 1. Verify User Token
       const userRes = await fetch("https://api.github.com/user", { headers });
@@ -39,7 +47,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // 2. Verify Repository Access
       const repoRes = await fetch(`https://api.github.com/repos/${repo}`, { headers });
-      if (!repoRes.ok) throw new Error(`Repository '${repo}' not found or no access.`);
+      if (!repoRes.ok) throw new Error(`Repository '${repo}' not found or inaccessible.`);
 
       // 3. Auto-Create Secret Gist if Gist ID field is left empty
       if (!gistId) {
@@ -74,7 +82,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (!gistRes.ok) {
-          throw new Error("Failed to create Gist. Ensure your PAT has the 'gist' scope checked.");
+          throw new Error("Failed to create Gist. Ensure PAT has the 'gist' scope checked.");
         }
 
         const newGist = await gistRes.json();

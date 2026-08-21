@@ -26,6 +26,57 @@ function getGFGUrlSubpath() {
   return segments.join("/");
 }
 
+function parseGFGProblemBody(container) {
+  if (!container) return "Refer to problem description on GeeksforGeeks.";
+
+  const contentBlocks = [];
+  const children = Array.from(container.children);
+
+  children.forEach((child) => {
+    const tagName = child.tagName.toLowerCase();
+
+    // 1. Examples Block (<pre>)
+    if (tagName === "pre") {
+      const text = child.textContent.trim();
+      if (text) {
+        contentBlocks.push("```text\n" + text + "\n```");
+      }
+    } 
+    // 2. Paragraphs (<p>)
+    else if (tagName === "p") {
+      let text = child.textContent.trim();
+      if (text) {
+        if (text.toLowerCase().startsWith("examples:")) {
+          contentBlocks.push("#### Examples:");
+        } else if (text.toLowerCase().startsWith("constraints:")) {
+          // Format constraints cleanly
+          const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+          const formatted = lines.map((line, idx) => {
+            if (idx === 0 && line.toLowerCase().startsWith("constraints:")) {
+              return `**${line}**`;
+            }
+            return `- ${line}`;
+          }).join("\n");
+          contentBlocks.push(formatted);
+        } else {
+          contentBlocks.push(text);
+        }
+      }
+    } 
+    // 3. Fallback for nested elements/divs
+    else {
+      const text = child.textContent.trim();
+      if (text) {
+        contentBlocks.push(text);
+      }
+    }
+  });
+
+  return contentBlocks.length > 0
+    ? contentBlocks.join("\n\n")
+    : container.textContent.trim() || "Refer to problem description on GeeksforGeeks.";
+}
+
 function extractGFGProblemDetails() {
   // 1. Title Extraction
   const titleEl =
@@ -37,90 +88,26 @@ function extractGFGProblemDetails() {
   const rawTitle = titleEl ? titleEl.textContent.trim() : document.title.replace("- GeeksforGeeks", "").trim();
   const urlSubpath = getGFGUrlSubpath();
 
-  // 2. Problem Statement Extraction
-  const statementEl = document.querySelector(".problems_problem_content__Xm_eO") ||
-                      document.querySelector("[class*='problem_content']");
+  // 2. Full Problem Content Extraction (Targeting the exact problem content container)
+  const statementContainer =
+    document.querySelector(".problems_problem_content__Xm_eO") ||
+    document.querySelector("[class*='problem_content']") ||
+    document.querySelector(".problem-statement");
 
-  let statementText = "";
-  if (statementEl) {
-    const pNodes = Array.from(statementEl.querySelectorAll("p"));
-    const paragraphs = pNodes
-      .map((el) => el.textContent.trim())
-      .filter((txt) => txt.length > 0 && !txt.toLowerCase().startsWith("examples:"));
-
-    statementText = paragraphs.join("\n\n");
-  }
-
-  // 3. Extract Metadata (Difficulty, Accuracy, Points)
-  const metaContainer = document.querySelector(".problems_header_description__t_8PB") ||
-                        document.querySelector("[class*='header_description']");
-
-  let difficulty = "N/A";
-  let accuracy = "N/A";
-  let points = "N/A";
-
-  if (metaContainer) {
-    const text = metaContainer.textContent;
-    const diffMatch = text.match(/Difficulty:\s*([A-Za-z]+)/i);
-    const accMatch = text.match(/Accuracy:\s*([\d.%\x2B]+)/i);
-    const ptsMatch = text.match(/Points:\s*(\d+)/i);
-
-    if (diffMatch) difficulty = diffMatch[1];
-    if (accMatch) accuracy = accMatch[1];
-    if (ptsMatch) points = ptsMatch[1];
-  }
-
-  // 4. Expected Complexities
-  let timeComplexity = "N/A";
-  let spaceComplexity = "N/A";
-  const complexityTexts = document.querySelectorAll(".problems_normal_text__QiKrb, [class*='normal_text']");
-
-  complexityTexts.forEach((el) => {
-    const txt = el.textContent.trim();
-    if (txt.toLowerCase().includes("time complexity")) {
-      timeComplexity = txt.split(":")[1]?.trim() || txt;
-    } else if (txt.toLowerCase().includes("auxiliary space") || txt.toLowerCase().includes("space complexity")) {
-      spaceComplexity = txt.split(":")[1]?.trim() || txt;
-    }
-  });
-
-  // 5. Extract Company & Topic Tags
-  const companyTags = [];
-  const topicTags = [];
-
-  const tagContainers = document.querySelectorAll(".problems_accordion_tags__JJ2DX, [class*='accordion_tags']");
-  tagContainers.forEach((container) => {
-    const headerText = container.textContent.toLowerCase();
-    const labels = container.querySelectorAll("a.ui.label, [class*='tag_label']");
-
-    if (headerText.includes("company tags")) {
-      labels.forEach((lbl) => companyTags.push(lbl.textContent.trim()));
-    } else if (headerText.includes("topic tags")) {
-      labels.forEach((lbl) => topicTags.push(lbl.textContent.trim()));
-    }
-  });
+  const statementText = parseGFGProblemBody(statementContainer);
 
   const problemData = {
     url: window.location.href.split("?")[0],
     title: rawTitle,
     urlSubpath: urlSubpath,
-    difficulty: difficulty,
-    accuracy: accuracy,
-    points: points,
-    timeLimit: timeComplexity,
-    memoryLimit: spaceComplexity,
-    companyTags: companyTags,
-    topicTags: topicTags,
-    statementParagraphs: statementText || "Refer to problem description on GeeksforGeeks.",
-    inputSpec: "Standard Input",
-    outputSpec: "Standard Output",
+    statementParagraphs: statementText,
     sampleTests: [],
     note: "",
     updatedAt: new Date().toISOString()
   };
 
   chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured rich GFG problem details -> Title:", rawTitle, "| Difficulty:", difficulty);
+    console.log("[CP-GitSync] Captured complete GFG problem statement for:", rawTitle);
   });
 
   return true;

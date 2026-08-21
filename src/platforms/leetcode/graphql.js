@@ -1,9 +1,67 @@
 // src/platforms/leetcode/graphql.js
 
+function parseLeetCodeDOMProblemBody() {
+  const container =
+    document.querySelector(".HTMLContent_html__0OZLp") ||
+    document.querySelector("div[data-track-load='description_content']") ||
+    document.querySelector("[data-track-load='description_content']") ||
+    document.querySelector(".elfjS") ||
+    document.querySelector("[class*='question-content']");
+
+  if (!container) return null;
+
+  const contentBlocks = [];
+  const children = Array.from(container.children);
+
+  children.forEach((child) => {
+    const tagName = child.tagName.toLowerCase();
+
+    // 1. Example Blocks (<pre>)
+    if (tagName === "pre") {
+      const text = child.textContent.trim();
+      if (text) {
+        contentBlocks.push("```text\n" + text + "\n```");
+      }
+    }
+    // 2. Constraints & Unordered Lists (<ul><li>...</li></ul>)
+    else if (tagName === "ul" || tagName === "ol") {
+      const lis = Array.from(child.querySelectorAll("li"));
+      const items = lis
+        .map((li) => `- ${li.textContent.trim()}`)
+        .filter((t) => t.length > 2);
+      if (items.length > 0) {
+        contentBlocks.push(items.join("\n"));
+      }
+    }
+    // 3. Paragraphs (<p>)
+    else if (tagName === "p") {
+      const text = child.textContent.trim();
+      if (!text || text === "\u00A0") return;
+
+      if (text.toLowerCase().startsWith("example")) {
+        contentBlocks.push(`#### ${text}`);
+      } else if (text.toLowerCase().startsWith("constraints:")) {
+        contentBlocks.push("**Constraints:**");
+      } else {
+        contentBlocks.push(text);
+      }
+    }
+    // 4. Follow-up & other direct text blocks
+    else {
+      const text = child.textContent.trim();
+      if (text && text !== "\u00A0") {
+        contentBlocks.push(text);
+      }
+    }
+  });
+
+  return contentBlocks.length > 0 ? contentBlocks.join("\n\n") : null;
+}
+
 function convertHtmlToMarkdown(htmlString) {
   if (!htmlString) return "";
   return htmlString
-    .replace(/<pre>/gi, "\n```\n")
+    .replace(/<pre>/gi, "\n```text\n")
     .replace(/<\/pre>/gi, "\n```\n")
     .replace(/<code>/gi, "`")
     .replace(/<\/code>/gi, "`")
@@ -12,27 +70,18 @@ function convertHtmlToMarkdown(htmlString) {
     .replace(/<em[^>]*>/gi, "*")
     .replace(/<\/em>/gi, "*")
     .replace(/<img[^>]*>/gi, "")
-    .replace(/<p>/gi, "\n")
+    .replace(/<p>/gi, "\n\n")
     .replace(/<\/p>/gi, "")
     .replace(/<ul>/gi, "\n")
     .replace(/<\/ul>/gi, "\n")
-    .replace(/<li>/gi, "* ")
-    .replace(/<\/li>/gi, "")
+    .replace(/<li>/gi, "- ")
+    .replace(/<\/li>/gi, "\n")
     .replace(/&nbsp;/g, " ")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
     .replace(/<[^>]*>/g, "")
     .trim();
-}
-
-function sanitizeTitle(rawName) {
-  const match = rawName.match(/(\d+\s*[A-Z\d]+[\s\S]*)/i);
-  let cleaned = match ? match[1] : rawName;
-  return cleaned
-    .replace(/[^a-zA-Z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
 }
 
 async function fetchLeetCodeProblemDetails(titleSlug) {
@@ -89,7 +138,7 @@ async function fetchLeetCodeSubmissionDetails(submissionId) {
     if (details && details.statusDisplay && !details.statusDisplay.toLowerCase().includes("evaluating")) {
       return details;
     }
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return details;
 }
@@ -123,7 +172,20 @@ async function buildLeetCodePayload(titleSlug, submissionId) {
   const problemTitle = `${problem.questionFrontendId}. ${problem.title}`;
   const verdict = normalizeLeetCodeVerdict(submission.statusDisplay, submission.statusCode);
   const language = submission.lang.verboseName || submission.lang.name;
-  const statementMarkdown = convertHtmlToMarkdown(problem.content);
+
+  // 1. Check DOM description (available if user is on description tab)
+  const domContent = parseLeetCodeDOMProblemBody();
+
+  // 2. Convert GraphQL HTML content if DOM is hidden/unmounted
+  const graphqlMarkdown = convertHtmlToMarkdown(problem.content);
+
+  // 3. Select the best available content
+  const statementMarkdown = domContent || graphqlMarkdown;
+
+  // Only warn if neither DOM nor GraphQL returned problem statement data
+  if (!statementMarkdown && typeof notifyDOMChanged === "function") {
+    notifyDOMChanged("LeetCode", "Problem Description (DOM & GraphQL API)");
+  }
 
   return {
     platform: "LeetCode",
@@ -132,16 +194,14 @@ async function buildLeetCodePayload(titleSlug, submissionId) {
     language: language,
     verdict: verdict,
     sourceCode: submission.code,
-    timestamp: submission.timestamp ? new Date(submission.timestamp * 1000).toLocaleString() : new Date().toLocaleString(),
+    timestamp: submission.timestamp
+      ? new Date(submission.timestamp * 1000).toLocaleString()
+      : new Date().toLocaleString(),
 
     problemDetails: {
       url: `https://leetcode.com/problems/${titleSlug}/`,
-      timeLimit: "N/A",
-      memoryLimit: "N/A",
       statementParagraphs: statementMarkdown,
-      inputSpec: "Refer to problem description.",
-      outputSpec: "Refer to problem description.",
-      sampleTests: problem.sampleTestCase ? [{ input: problem.sampleTestCase, output: "N/A" }] : [],
+      sampleTests: [],
       note: ""
     }
   };

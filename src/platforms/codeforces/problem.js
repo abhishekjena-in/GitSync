@@ -1,3 +1,5 @@
+// src/platforms/codeforces/problem.js
+
 function getFullProblemTitle() {
   const problemContainer = document.querySelector(".problem-statement");
   if (!problemContainer) return "";
@@ -5,14 +7,9 @@ function getFullProblemTitle() {
   const titleEl = problemContainer.querySelector(".title");
   let rawTitle = titleEl ? titleEl.innerText.trim() : "";
 
-  // Remove leading single letters like "A. ", "B. " if present to avoid duplication
   rawTitle = rawTitle.replace(/^[A-Z1-9]\.\s*/, "");
 
-  // Try extracting contest ID and index from URL
-  // Example 1: /problemset/problem/158/A
-  // Example 2: /contest/158/problem/A
-  const urlMatch = window.location.pathname.match(/(?:problem\/|contest\/)(\d+)\/(?:problem\/)?([A-Z\d]+)/i);
-
+  const urlMatch = window.location.pathname.match(/(?:problemset\/problem|contest)\/(\d+)\/(?:problem\/)?([A-Z\d]+)/i);
   if (urlMatch) {
     const contestId = urlMatch[1];
     const problemIndex = urlMatch[2].toUpperCase();
@@ -20,6 +17,23 @@ function getFullProblemTitle() {
   }
 
   return rawTitle;
+}
+
+function cleanMathText(node) {
+  if (!node) return "";
+  const clone = node.cloneNode(true);
+
+  // Convert Codeforces math spans into clean markdown italics
+  clone.querySelectorAll(".tex-span").forEach((span) => {
+    span.textContent = ` *${span.innerText.trim()}* `;
+  });
+
+  // Convert monospace elements
+  clone.querySelectorAll(".tex-font-style-tt").forEach((tt) => {
+    tt.textContent = ` \`${tt.innerText.trim()}\` `;
+  });
+
+  return clone.innerText.trim();
 }
 
 function extractAndSaveProblemDetails() {
@@ -32,7 +46,7 @@ function extractAndSaveProblemDetails() {
   const memoryLimitEl = problemContainer.querySelector(".memory-limit");
 
   const header = problemContainer.querySelector(".header");
-  const clones = Array.from(problemContainer.children).filter(
+  const storyBlocks = Array.from(problemContainer.children).filter(
     (child) =>
       child !== header &&
       !child.classList.contains("input-specification") &&
@@ -41,12 +55,45 @@ function extractAndSaveProblemDetails() {
       !child.classList.contains("note")
   );
 
-  const statementParagraphs = clones.map((c) => c.innerText.trim()).join("\n\n");
+  const statementParagraphs = storyBlocks
+    .map((block) => {
+      const pTags = Array.from(block.querySelectorAll("p"));
+      if (pTags.length > 0) {
+        return pTags.map((p) => cleanMathText(p)).join("\n\n");
+      }
+      return cleanMathText(block);
+    })
+    .filter(Boolean)
+    .join("\n\n");
 
-  const inputSpec = problemContainer.querySelector(".input-specification")?.innerText.trim() || "";
-  const outputSpec = problemContainer.querySelector(".output-specification")?.innerText.trim() || "";
-  const note = problemContainer.querySelector(".note")?.innerText.trim() || "";
+  // Extract Input Specification
+  const inputEl = problemContainer.querySelector(".input-specification");
+  let inputSpec = "";
+  if (inputEl) {
+    const inputClone = inputEl.cloneNode(true);
+    inputClone.querySelector(".section-title")?.remove();
+    inputSpec = cleanMathText(inputClone);
+  }
 
+  // Extract Output Specification
+  const outputEl = problemContainer.querySelector(".output-specification");
+  let outputSpec = "";
+  if (outputEl) {
+    const outputClone = outputEl.cloneNode(true);
+    outputClone.querySelector(".section-title")?.remove();
+    outputSpec = cleanMathText(outputClone);
+  }
+
+  // Extract Note
+  const noteEl = problemContainer.querySelector(".note");
+  let note = "";
+  if (noteEl) {
+    const noteClone = noteEl.cloneNode(true);
+    noteClone.querySelector(".section-title")?.remove();
+    note = cleanMathText(noteClone);
+  }
+
+  // Extract Sample Tests
   const sampleTests = [];
   const inputs = problemContainer.querySelectorAll(".sample-test .input pre");
   const outputs = problemContainer.querySelectorAll(".sample-test .output pre");
@@ -58,12 +105,17 @@ function extractAndSaveProblemDetails() {
     });
   }
 
+  // Store raw HTML clone for the popup modal preview
+  const containerClone = problemContainer.cloneNode(true);
+  containerClone.querySelectorAll(".input-output-copier, .btn-copy").forEach((b) => b.remove());
+
   const problemData = {
     url: window.location.href,
     title: fullTitle,
     timeLimit: timeLimitEl ? timeLimitEl.innerText.replace("time limit per test", "").trim() : "1 second",
     memoryLimit: memoryLimitEl ? memoryLimitEl.innerText.replace("memory limit per test", "").trim() : "256 megabytes",
     statementParagraphs,
+    exactProblemHtml: containerClone.outerHTML,
     inputSpec,
     outputSpec,
     sampleTests,
@@ -72,7 +124,7 @@ function extractAndSaveProblemDetails() {
   };
 
   chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured problem details for:", fullTitle);
+    console.log("[CP-GitSync] Captured Codeforces problem details for:", fullTitle);
   });
 }
 

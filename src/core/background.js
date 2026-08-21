@@ -11,16 +11,38 @@ async function processQueue() {
 
   isProcessing = true;
   const { data, sender } = syncQueue.shift();
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+
+  // 1. Notify User: Sync Process Started
+  if (tabId) {
+    chrome.tabs.sendMessage(tabId, {
+      action: "SYNC_START",
+      platform: data.platform,
+      attempt: data.attemptNumber
+    }).catch(() => {});
+  }
 
   try {
+    // 2. Perform GitHub Push & README Generation
     const success = await processGitHubSync(data);
-    if (success && sender && sender.tab && sender.tab.id) {
-      chrome.tabs.sendMessage(sender.tab.id, { action: "SYNC_SUCCESS" }).catch(() => {
-        // Safe messaging fallback if tab reloads or closes
-      });
+
+    if (success && tabId) {
+      // 3. Notify User: Sync Succeeded
+      chrome.tabs.sendMessage(tabId, {
+        action: "SYNC_SUCCESS",
+        platform: data.platform
+      }).catch(() => {});
     }
   } catch (err) {
-    console.error("GitHub Sync Error:", err);
+    console.error("[CP-GitSync Queue Error]:", err);
+    // 4. Notify User: Sync Failed with Reason
+    if (tabId) {
+      chrome.tabs.sendMessage(tabId, {
+        action: "SYNC_ERROR",
+        platform: data.platform,
+        error: err.message || "Push rejected"
+      }).catch(() => {});
+    }
   } finally {
     isProcessing = false;
     processQueue();
@@ -30,7 +52,7 @@ async function processQueue() {
 // Master Message Listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-  // Action 1: Queue GitHub pushes for Codeforces, AtCoder, and LeetCode
+  // Action 1: Queue GitHub pushes
   if (message.action === "SYNC_TO_GITHUB") {
     syncQueue.push({ data: message.data, sender });
     processQueue();
@@ -38,7 +60,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Action 2: Read-only history fetcher for LeetCode attempt calculations
+  // Action 2: Read-only history fetcher for attempt calculations
   if (message.action === "GET_PROBLEM_HISTORY") {
     (async () => {
       try {
@@ -51,11 +73,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const { githubPat: token, githubRepo: repo, githubBranch: branch = "main" } = config;
         const folderPath = message.folderPath;
         const cacheBuster = Date.now();
+        const cleanRepo = repo.replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").trim().replace(/^\/+|\/+$/g, "");
 
-        // 1. Fetch directory contents via background process (Bypasses web page CORS)
-        const dirRes = await fetch(`https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`, {
+        // Fetch directory contents
+        const dirRes = await fetch(`https://api.github.com/repos/${cleanRepo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`, {
           headers: {
-            "Authorization": `token ${token}`,
+            "Authorization": `Bearer ${token.trim()}`,
             "Cache-Control": "no-cache"
           }
         });
@@ -66,25 +89,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const dirFiles = await dirRes.json();
-        if (!Array.isArray(dirFiles)) {
-          sendResponse({ success: true, existingSubmissions: [], attemptNumber: 1 });
-          return;
+        let maxAttemptInFiles = 0;
+        if (Array.isArray(dirFiles)) {
+          dirFiles.forEach(file => {
+            const match = file.name.match(/_Attempt_(\d+)_/i);
+            if (match) {
+              const attemptNum = parseInt(match[1], 10);
+              if (attemptNum > maxAttemptInFiles) maxAttemptInFiles = attemptNum;
+            }
+          });
         }
 
-        // Detect highest attempt number from existing files
-        let maxAttemptInFiles = 0;
-        dirFiles.forEach(file => {
-          const match = file.name.match(/_Attempt_(\d+)_/i);
-          if (match) {
-            const attemptNum = parseInt(match[1], 10);
-            if (attemptNum > maxAttemptInFiles) maxAttemptInFiles = attemptNum;
-          }
-        });
-
-        // 2. Fetch and decode README.md
-        const readmeRes = await fetch(`https://api.github.com/repos/${repo}/contents/${folderPath}/README.md?ref=${branch}&t=${cacheBuster}`, {
+        // Fetch and decode README.md
+        const readmeRes = await fetch(`https://api.github.com/repos/${cleanRepo}/contents/${folderPath}/README.md?ref=${branch}&t=${cacheBuster}`, {
           headers: {
-            "Authorization": `token ${token}`,
+            "Authorization": `Bearer ${token.trim()}`,
             "Cache-Control": "no-cache"
           }
         });
@@ -95,12 +114,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const fileData = await readmeRes.json();
-
-        // Safe UTF-8 Base64 Decoding
         const bytes = Uint8Array.from(atob(fileData.content.replace(/\s/g, '')), c => c.charCodeAt(0));
         let content = new TextDecoder().decode(bytes);
 
-        // Decode HTML entities that interfere with table parsing
         content = content
           .replace(/&quot;/g, '"')
           .replace(/&lt;/g, '<')
@@ -112,16 +128,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         lines.forEach(line => {
           const parts = line.split("|").map(s => s.trim());
-          if (parts.length >= 9 && !isNaN(parseInt(parts[1], 10))) {
+          if (parts.length >= 8 && !isNaN(parseInt(parts[1], 10))) {
             const attempt = parseInt(parts[1], 10);
             historyMap.set(attempt, {
               attemptNumber: attempt,
-              submissionId: parts[2],
-              when: parts[3],
-              verdict: parts[4].replace(/[✅❌]\s*/g, "").trim(),
-              time: parts[5],
-              memory: parts[6],
-              language: parts[7]
+              submissionId: parts[2] || "",
+              when: parts[3] || "",
+              verdict: (parts[4] || "").replace(/[✅❌]\s*/g, "").trim(),
+              time: parts[5] || "0 ms",
+              memory: parts[6] || "0 KB",
+              language: parts[7] || ""
             });
           }
         });
@@ -136,6 +152,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, existingSubmissions: [], attemptNumber: 1 });
       }
     })();
-    return true; // Keeps async response channel open
+    return true;
   }
 });

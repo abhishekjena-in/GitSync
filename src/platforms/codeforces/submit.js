@@ -1,14 +1,19 @@
+// src/platforms/codeforces/submit.js
+
 function showUIWarning(msg) {
-  const toast = document.createElement("div");
-  toast.className = "cf-sync-toast warning";
-  toast.innerText = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
+  if (typeof showCPToast === "function") {
+    showCPToast(msg, "warning");
+  } else {
+    const toast = document.createElement("div");
+    toast.className = "cf-sync-toast warning";
+    toast.innerText = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 6000);
+  }
 }
 
 function injectShowProblemButton() {
-  const form = document.querySelector(".submit-form, .submitFrameForm");
-  // If no submission form exists on the current page view, exit silently
+  const form = document.querySelector(".submit-form, .submitFrameForm, form.table-form");
   if (!form) return;
 
   if (document.getElementById("cpj-show-problem-btn")) return;
@@ -42,58 +47,28 @@ function renderProblemModal() {
     modal.id = "cf-problem-modal";
     modal.className = "cf-problem-modal";
 
+    const bodyContent = data.exactProblemHtml || `
+      <div class="modal-section">
+        <strong>Limits:</strong> ${data.timeLimit || "1 second"} | ${data.memoryLimit || "256 megabytes"}
+      </div>
+      <div class="modal-section">
+        ${data.statementParagraphs ? data.statementParagraphs.replace(/\n\n/g, "<br/><br/>") : ""}
+      </div>
+    `;
+
     modal.innerHTML = `
       <div class="cf-modal-header" id="cf-modal-header">
         <span>${data.title}</span>
         <span class="cf-modal-close" id="cf-modal-close">&times;</span>
       </div>
       <div class="cf-modal-body">
-        <div class="modal-section">
-          <strong>Limits:</strong> ${data.timeLimit || "1 second"} | ${data.memoryLimit || "256 megabytes"}
-        </div>
-
-        <div class="modal-section">
-          ${data.statementParagraphs ? data.statementParagraphs.replace(/\n\n/g, "<br/><br/>") : ""}
-        </div>
-
-        ${data.inputSpec ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Input Specification</h4>
-            <p>${data.inputSpec}</p>
-          </div>
-        ` : ''}
-
-        ${data.outputSpec ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Output Specification</h4>
-            <p>${data.outputSpec}</p>
-          </div>
-        ` : ''}
-
-        ${(data.sampleTests && data.sampleTests.length > 0) ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Examples</h4>
-            ${data.sampleTests.map((t, idx) => `
-              <div class="sample-box">
-                <div><strong>Input ${idx + 1}:</strong></div>
-                <pre class="code-block">${t.input}</pre>
-                <div><strong>Output ${idx + 1}:</strong></div>
-                <pre class="code-block">${t.output}</pre>
-              </div>
-            `).join("")}
-          </div>
-        ` : ''}
-
-        ${data.note ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Note</h4>
-            <p>${data.note}</p>
-          </div>
-        ` : ''}
+        ${bodyContent}
       </div>
     `;
 
     document.body.appendChild(modal);
+
+    modal.querySelectorAll(".input-output-copier").forEach((btn) => btn.remove());
 
     document.getElementById("cf-modal-close").onclick = () => modal.remove();
     makeElementDraggable(modal, document.getElementById("cf-modal-header"));
@@ -118,8 +93,8 @@ function makeElementDraggable(elmnt, handle) {
     pos2 = pos4 - e.clientY;
     pos3 = e.clientX;
     pos4 = e.clientY;
-    elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
-    elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+    elmnt.style.top = elmnt.offsetTop - pos2 + "px";
+    elmnt.style.left = elmnt.offsetLeft - pos1 + "px";
   }
 
   function closeDragElement() {
@@ -129,8 +104,7 @@ function makeElementDraggable(elmnt, handle) {
 }
 
 function listenForSubmission() {
-  const form = document.querySelector(".submit-form, .submitFrameForm");
-  // Return quietly if there's no submit form on this view
+  const form = document.querySelector(".submit-form, .submitFrameForm, form.table-form");
   if (!form) return;
 
   form.addEventListener("submit", () => {
@@ -155,7 +129,9 @@ function listenForSubmission() {
         timestamp: Date.now()
       };
 
-      chrome.storage.local.set({ pending_submission: pendingSubmission });
+      chrome.storage.local.set({ pending_submission: pendingSubmission }, () => {
+        console.log("[CP-GitSync] Captured pending Codeforces submission:", pendingSubmission.language);
+      });
     } catch (err) {
       console.error("Codeforces submit parsing error:", err);
       showUIWarning("Error capturing submission. Please check extension console.");
@@ -163,6 +139,5 @@ function listenForSubmission() {
   });
 }
 
-// Initialize on page load
 injectShowProblemButton();
 listenForSubmission();

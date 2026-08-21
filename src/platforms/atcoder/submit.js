@@ -1,9 +1,15 @@
+// src/platforms/atcoder/submit.js
+
 function showUIWarning(msg) {
-  const toast = document.createElement("div");
-  toast.className = "cf-sync-toast warning";
-  toast.innerText = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
+  if (typeof showCPToast === "function") {
+    showCPToast(msg, "warning");
+  } else {
+    const toast = document.createElement("div");
+    toast.className = "cf-sync-toast warning";
+    toast.innerText = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 6000);
+  }
 }
 
 function injectShowProblemButton() {
@@ -33,7 +39,7 @@ function renderProblemModal() {
   chrome.storage.local.get(["current_problem"], (res) => {
     const data = res.current_problem;
     if (!data) {
-      alert("No problem details found. Please visit the problem page first.");
+      alert("No problem details found. Please visit the problem statement page first.");
       return;
     }
 
@@ -41,51 +47,42 @@ function renderProblemModal() {
     modal.id = "cf-problem-modal";
     modal.className = "cf-problem-modal";
 
+    // Direct render of the English task statement with full KaTeX math & styling
+    let bodyContent = "";
+    if (data.englishHtml) {
+      bodyContent = `
+        <div class="modal-section" style="margin-bottom: 12px; font-weight: 600; color: #64748b;">
+          Limits: ${data.timeLimit || "2 seconds"} | ${data.memoryLimit || "1024 megabytes"}
+        </div>
+        <div class="atcoder-modal-rendered-content">
+          ${data.englishHtml}
+        </div>
+      `;
+    } else {
+      bodyContent = `
+        <div class="modal-section">
+          <strong>Limits:</strong> ${data.timeLimit || "2 seconds"} | ${data.memoryLimit || "1024 megabytes"}
+        </div>
+        <div class="modal-section">
+          ${data.statementParagraphs ? data.statementParagraphs.replace(/\n\n/g, "<br/><br/>") : ""}
+        </div>
+      `;
+    }
+
     modal.innerHTML = `
       <div class="cf-modal-header" id="cf-modal-header">
         <span>${data.title}</span>
         <span class="cf-modal-close" id="cf-modal-close">&times;</span>
       </div>
       <div class="cf-modal-body">
-        <div class="modal-section">
-          <strong>Limits:</strong> ${data.timeLimit || "2 seconds"} | ${data.memoryLimit || "1024 megabytes"}
-        </div>
-
-        <div class="modal-section">
-          ${data.statementParagraphs ? data.statementParagraphs.replace(/\n\n/g, "<br/><br/>") : ""}
-        </div>
-
-        ${data.inputSpec ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Input Specification</h4>
-            <p>${data.inputSpec}</p>
-          </div>
-        ` : ''}
-
-        ${data.outputSpec ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Output Specification</h4>
-            <p>${data.outputSpec}</p>
-          </div>
-        ` : ''}
-
-        ${(data.sampleTests && data.sampleTests.length > 0) ? `
-          <div class="modal-section">
-            <h4 class="modal-title">Examples</h4>
-            ${data.sampleTests.map((t, idx) => `
-              <div class="sample-box">
-                <div><strong>Input ${idx + 1}:</strong></div>
-                <pre class="code-block">${t.input}</pre>
-                <div><strong>Output ${idx + 1}:</strong></div>
-                <pre class="code-block">${t.output}</pre>
-              </div>
-            `).join("")}
-          </div>
-        ` : ''}
+        ${bodyContent}
       </div>
     `;
 
     document.body.appendChild(modal);
+
+    // Strip duplicate inline copy buttons inside the modal
+    modal.querySelectorAll(".btn-copy, .div-btn-copy").forEach((btn) => btn.remove());
 
     document.getElementById("cf-modal-close").onclick = () => modal.remove();
     makeElementDraggable(modal, document.getElementById("cf-modal-header"));
@@ -131,24 +128,23 @@ function listenForSubmission() {
         return;
       }
 
-      // 1. Language Select element on AtCoder
       const languageSelect = document.querySelector("select[name='data.LanguageId']");
       const selectedLanguage = languageSelect ? languageSelect.options[languageSelect.selectedIndex].text : "C++";
 
-      // 2. Extract source code (Standard Textarea / CodeMirror fallback)
       let sourceCode = "";
 
-      // Try reading CodeMirror first (if active on AtCoder)
+      // Try reading CodeMirror instance first
       const codeMirrorEl = document.querySelector(".CodeMirror");
       if (codeMirrorEl && codeMirrorEl.CodeMirror) {
         sourceCode = codeMirrorEl.CodeMirror.getValue();
       }
 
-      // Fallback: Read plain textarea value
+      // Fallback to standard textarea
       if (!sourceCode) {
-        const plainTextarea = document.querySelector("textarea[name='sourceCode']") ||
-                              document.querySelector("textarea.plain-textarea") ||
-                              document.querySelector("#plain-textarea");
+        const plainTextarea =
+          document.querySelector("textarea[name='sourceCode']") ||
+          document.querySelector("textarea.plain-textarea") ||
+          document.querySelector("#plain-textarea");
         sourceCode = plainTextarea ? plainTextarea.value : "";
       }
 

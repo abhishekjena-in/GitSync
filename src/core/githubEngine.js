@@ -7,7 +7,7 @@ function getExtension(langStr) {
   if (l.includes("c++") || l.includes("cpp") || l.includes("g++") || l.includes("gcc")) return "cpp";
   if (l === "c" || l.startsWith("c ") || l.includes("clang")) return "c";
   if (l.includes("java") && !l.includes("javascript")) return "java";
-  if (l.includes("python") || l.includes("pypy")) return "py";
+  if (l.includes("python") || l.includes("pypy") || l.startsWith("pyth")) return "py";
   if (l.includes("c#") || l.includes("csharp")) return "cs";
   if (l.includes("javascript") || l.includes("node") || l.includes("js")) return "js";
   if (l.includes("typescript") || l.includes("ts")) return "ts";
@@ -19,7 +19,7 @@ function getExtension(langStr) {
   if (l.includes("php")) return "php";
   if (l.includes("scala")) return "scala";
   if (l.includes("haskell")) return "hs";
-  if (l.includes("sql")) return "sql";
+  if (l.includes("sql") || l.includes("sqlite")) return "sql";
   if (l.includes("bash") || l.includes("shell") || l.includes("sh")) return "sh";
 
   return "txt";
@@ -39,11 +39,21 @@ function getVerdictAbbr(verdict) {
   if (!verdict) return "WA";
   const v = String(verdict).trim().toUpperCase();
 
-  if (v.includes("100") || v === "AC" || v.includes("ACCEPTED") || v.includes("OK") || v.includes("CORRECT")) return "AC";
+  if (
+    v === "AC" ||
+    v.includes("ACCEPTED") ||
+    v.includes("100") ||
+    v.includes("OK") ||
+    v.includes("CORRECT") ||
+    v.includes("PERFECT") ||
+    v.includes("PASSED")
+  ) {
+    return "AC";
+  }
   if (v === "TLE" || v.includes("TIME LIMIT")) return "TLE";
   if (v === "MLE" || v.includes("MEMORY LIMIT")) return "MLE";
   if (v === "RE" || v === "RTE" || v.includes("RUNTIME")) return "RTE";
-  if (v === "CE" || v.includes("COMPILATION") || v.includes("COMPILE")) return "CE";
+  if (v === "CE" || v.includes("COMPILATION") || v.includes("COMPILE") || v.includes("SYNTAX")) return "CE";
 
   return "WA";
 }
@@ -68,16 +78,52 @@ function sanitizeTitle(rawName) {
     .replace(/\s+/g, "-");
 }
 
+function utf8ToBase64(str) {
+  return btoa(encodeURIComponent(str || "").replace(/%([0-9A-F]{2})/g, (match, p1) => {
+    return String.fromCharCode("0x" + p1);
+  }));
+}
+
+function cleanRepoName(rawRepo) {
+  if (!rawRepo) return "";
+  return rawRepo
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+}
+
+// Clean corrupted nested link strings
+function extractCleanFileName(rawCellStr) {
+  if (!rawCellStr) return "";
+  
+  // Extract content inside [`...`]
+  const bracketMatch = rawCellStr.match(/\[`?([^`\]]+)`?\]/);
+  let cleanName = bracketMatch ? bracketMatch[1] : rawCellStr;
+
+  // Remove any relative path prefix
+  cleanName = cleanName.replace(/^\.?\/+/, "");
+
+  // If corrupted with chained repeats (e.g., file.java./file.java), isolate the first file token
+  if (cleanName.includes("./")) {
+    cleanName = cleanName.split("./")[0];
+  }
+
+  return cleanName.trim();
+}
+
 export async function processGitHubSync(data) {
   const config = await chrome.storage.sync.get(["githubPat", "githubRepo", "githubBranch"]);
   if (!config.githubPat || !config.githubRepo) {
-    console.warn("GitHub credentials missing in popup.");
-    return false;
+    throw new Error("GitHub PAT or Repository missing in settings.");
   }
 
-  const { githubPat: token, githubRepo: repo, githubBranch: branch = "main" } = config;
+  const token = config.githubPat.trim();
+  const repo = cleanRepoName(config.githubRepo);
+  const branch = (config.githubBranch || "main").trim();
+
   const headers = {
-    "Authorization": `token ${token}`,
+    "Authorization": `Bearer ${token}`,
     "Accept": "application/vnd.github.v3+json",
     "Content-Type": "application/json",
     "Cache-Control": "no-cache"
@@ -86,15 +132,15 @@ export async function processGitHubSync(data) {
   const cleanTitle = sanitizeTitle(data.problemName);
   const platform = data.platform || "Codeforces";
 
-  // DYNAMIC ROUTING PER PLATFORM
   let folderPath = `${platform}/${cleanTitle}`;
-
   if (platform.toLowerCase() === "hackerrank" && data.urlSubpath) {
     folderPath = `HackerRank/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "codechef" && data.urlSubpath) {
     folderPath = `CodeChef/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "geeksforgeeks" && data.urlSubpath) {
     folderPath = `GeeksforGeeks/${data.urlSubpath}`;
+  } else if (platform.toLowerCase() === "codekata" && data.urlSubpath) {
+    folderPath = `CodeKata/${data.urlSubpath}`;
   } else if (platform.toLowerCase() === "atcoder" && data.contestName) {
     const cleanContest = sanitizeTitle(data.contestName);
     folderPath = `${platform}/${cleanContest}/${cleanTitle}`;
@@ -104,47 +150,38 @@ export async function processGitHubSync(data) {
   const ext = getExtension(data.language);
   const verdictAbbr = getVerdictAbbr(data.verdict);
 
-  // 1. Calculate next attempt number dynamically
-  let attemptNumber = data.attemptNumber || 1;
-  const useFilesystemHistory =
-    platform.toLowerCase() === "leetcode" ||
-    platform.toLowerCase() === "hackerrank" ||
-    platform.toLowerCase() === "codechef" ||
-    platform.toLowerCase() === "geeksforgeeks";
-
-  if (useFilesystemHistory) {
-    try {
-      const cacheBuster = Date.now();
-      const dirRes = await fetch(
-        `https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`,
-        { headers }
-      );
-      if (dirRes.ok) {
-        const files = await dirRes.json();
-        if (Array.isArray(files)) {
-          let maxAttempt = 0;
-          files.forEach((f) => {
-            const m = f.name.match(/_Attempt_(\d+)_/i);
-            if (m) {
-              const num = parseInt(m[1], 10);
-              if (num < 1000000 && num > maxAttempt) {
-                maxAttempt = num;
-              }
+  // 1. Calculate next attempt number strictly from repo files
+  let maxExistingAttempt = 0;
+  try {
+    const cacheBuster = Date.now();
+    const dirRes = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`,
+      { headers }
+    );
+    if (dirRes.ok) {
+      const files = await dirRes.json();
+      if (Array.isArray(files)) {
+        files.forEach((f) => {
+          const m = f.name.match(/_Attempt_(\d+)_/i);
+          if (m) {
+            const num = parseInt(m[1], 10);
+            if (num < 1000000 && num > maxExistingAttempt) {
+              maxExistingAttempt = num;
             }
-          });
-          attemptNumber = maxAttempt + 1;
-        }
+          }
+        });
       }
-    } catch (e) {
-      console.warn("Failed to inspect directory for attempt count, using 1:", e);
     }
+  } catch (e) {
+    console.warn("Could not inspect existing folder attempts:", e);
   }
 
-  const fileName = `${submissionId}_Attempt_${attemptNumber}_${verdictAbbr}.${ext}`;
+  const finalAttemptNumber = Math.max(maxExistingAttempt + 1, data.attemptNumber || 1);
+  const fileName = `${submissionId}_Attempt_${finalAttemptNumber}_${verdictAbbr}.${ext}`;
   const filePath = `${folderPath}/${fileName}`;
 
   // 2. Push Code Attempt File
-  const encodedCode = btoa(unescape(encodeURIComponent(data.sourceCode)));
+  const encodedCode = utf8ToBase64(data.sourceCode || "");
   const pushRes = await fetch(`https://api.github.com/repos/${repo}/contents/${filePath}`, {
     method: "PUT",
     headers,
@@ -156,43 +193,46 @@ export async function processGitHubSync(data) {
   });
 
   if (!pushRes.ok) {
-    const errorData = await pushRes.json();
-    throw new Error(`Failed to push code file: ${errorData.message}`);
+    const errData = await pushRes.json().catch(() => ({ message: pushRes.statusText }));
+    throw new Error(errData.message || "Failed to push file to GitHub");
   }
 
-  // FORCE INJECT CURRENT ATTEMPT TO BYPASS GITHUB API CACHE DELAY
   data.latestAttemptInject = {
     filename: fileName,
-    attemptNumber: attemptNumber,
+    attemptNumber: finalAttemptNumber,
+    submissionId: submissionId,
+    when: data.when || new Date().toLocaleString(),
+    verdict: data.verdict,
     verdictAbbr: verdictAbbr,
+    time: data.time || "0 ms",
+    memory: data.memory || "0 KB",
+    language: data.language,
     ext: ext
   };
 
-  // 3. Re-render Problem-Level README.md
-  await syncProblemReadme(
-    headers,
-    repo,
-    branch,
-    folderPath,
-    cleanTitle,
-    platform,
-    data,
-    data.timestamp || new Date().toLocaleString()
-  );
+  // 3. Re-render Problem README cleanly
+  try {
+    await syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, platform, data);
+  } catch (err) {
+    console.error("Problem README update error:", err);
+  }
 
   // 4. Update Root Dashboard
-  await updateRootReadmeFromRepo(headers, repo, branch);
+  try {
+    await updateRootReadmeFromRepo(headers, repo, branch);
+  } catch (err) {
+    console.error("Root README update error:", err);
+  }
 
-  console.log(`Successfully synced attempt ${fileName} and updated Root Dashboard!`);
   return true;
 }
 
-async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, platform, data, currentTimestamp) {
+async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, platform, data) {
   const readmePath = `${folderPath}/README.md`;
-
   let existingReadme = null;
-  const existingTimestamps = new Map();
+  const historyMap = new Map();
 
+  // 1. Read existing README table entries and clean any malformed rows
   try {
     const cacheBuster = Date.now();
     const res = await fetch(
@@ -201,159 +241,163 @@ async function syncProblemReadme(headers, repo, branch, folderPath, cleanTitle, 
     );
     if (res.ok) {
       existingReadme = await res.json();
-
-      const bytes = Uint8Array.from(atob(existingReadme.content.replace(/\s/g, "")), (c) =>
-        c.charCodeAt(0)
-      );
+      const bytes = Uint8Array.from(atob(existingReadme.content.replace(/\s/g, "")), (c) => c.charCodeAt(0));
       const content = new TextDecoder().decode(bytes);
       const lines = content.split("\n");
 
       lines.forEach((line) => {
         const parts = line.split("|").map((s) => s.trim());
-        if (parts.length >= 6 && !isNaN(parseInt(parts[1], 10))) {
+        if (parts.length >= 8 && !isNaN(parseInt(parts[1], 10))) {
           const attempt = parseInt(parts[1], 10);
-          const timeStr = parts[2];
-          existingTimestamps.set(attempt, timeStr);
+          const rawFileCell = parts[parts.length - 2] || "";
+          const cleanName = extractCleanFileName(rawFileCell);
+
+          historyMap.set(attempt, {
+            attemptNumber: attempt,
+            submissionId: parts[2] || "",
+            when: parts[3] || "",
+            verdict: parts[4] || "",
+            time: parts[5] || "0 ms",
+            memory: parts[6] || "0 KB",
+            language: parts[7] || "",
+            filename: cleanName
+          });
         }
       });
     }
   } catch (e) {
-    console.log("README.md does not exist yet.");
+    // README does not exist yet
   }
 
-  let tableHeader = "";
-  let tableRows = "";
-
-  const isFilesystemPlatform =
-    platform.toLowerCase() === "leetcode" ||
-    platform.toLowerCase() === "hackerrank" ||
-    platform.toLowerCase() === "codechef" ||
-    platform.toLowerCase() === "geeksforgeeks";
-
-  if (isFilesystemPlatform) {
-    tableHeader = `| Attempt | Date & Time | Verdict | Language | File |
-| :---: | :---: | :---: | :---: | :---: |`;
-
-    const attemptFiles = [];
-
-    try {
-      const cacheBuster = Date.now();
-      const dirRes = await fetch(
-        `https://api.github.com/repos/${repo}/contents/${folderPath}?ref=${branch}&t=${cacheBuster}`,
-        { headers }
-      );
-
-      if (dirRes.ok) {
-        const files = await dirRes.json();
-        if (Array.isArray(files)) {
-          files.forEach((f) => {
-            if (f.name.toLowerCase() !== "readme.md") {
-              const match = f.name.match(/_Attempt_(\d+)_([A-Z]+)\.([a-z0-9]+)$/i);
-              if (match) {
-                const parsedAttempt = parseInt(match[1], 10);
-                if (parsedAttempt < 1000000) {
-                  attemptFiles.push({
-                    filename: f.name,
-                    attemptNumber: parsedAttempt,
-                    verdictAbbr: match[2],
-                    ext: match[3]
-                  });
-                }
-              }
-            }
-          });
-        }
-      }
-    } catch (e) {
-      console.warn(`Failed to read directory files for ${platform} README:`, e);
-    }
-
-    // PRECISE OVERRIDE: Force inject the freshly pushed attempt if GitHub API cache missed it (Fixes 1st attempt missing bug)
-    if (data.latestAttemptInject) {
-      const exists = attemptFiles.some((af) => af.attemptNumber === data.latestAttemptInject.attemptNumber);
-      if (!exists) {
-        attemptFiles.push(data.latestAttemptInject);
-      }
-    }
-
-    attemptFiles.sort((a, b) => a.attemptNumber - b.attemptNumber);
-
-    tableRows = attemptFiles
-      .map((af) => {
-        const verdictDisplay = abbrToVerdictDisplay(af.verdictAbbr);
-        const langName = extToLanguageName(af.ext);
-        const when = existingTimestamps.get(af.attemptNumber) || currentTimestamp;
-
-        return `| ${af.attemptNumber} | ${when} | ${verdictDisplay} | ${langName} | [\`${af.filename}\`](./${af.filename}) |`;
-      })
-      .join("\n");
-
-  } else {
-    // --- CODEFORCES, ATCODER, ETC. ---
-    tableHeader = `| Attempt | Submission ID | Date & Time | Verdict | Runtime | Memory | Language | File |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |`;
-
-    const submissions = data.allProblemSubmissions || [];
-    const sortedSubmissions = [...submissions].sort((a, b) => a.attemptNumber - b.attemptNumber);
-
-    tableRows = sortedSubmissions
-      .map((s) => {
+  // 2. Merge platform table rows
+  if (Array.isArray(data.allProblemSubmissions) && data.allProblemSubmissions.length > 0) {
+    data.allProblemSubmissions.forEach((s) => {
+      if (!historyMap.has(s.attemptNumber)) {
         const vAbbr = getVerdictAbbr(s.verdict);
         const ext = getExtension(s.language);
         const fName = `${s.submissionId}_Attempt_${s.attemptNumber}_${vAbbr}.${ext}`;
-        const isAC =
-          s.verdict.toLowerCase().includes("accepted") || s.verdict.toLowerCase().includes("ok");
+        const isAC = vAbbr === "AC";
         const verdictBadge = isAC ? "✅" : "❌";
 
-        return `| ${s.attemptNumber} | ${s.submissionId} | ${s.when} | ${verdictBadge} ${s.verdict} | ${s.time || "N/A"} | ${s.memory || "N/A"} | ${s.language} | [\`${fName}\`](./${fName}) |`;
-      })
-      .join("\n");
+        historyMap.set(s.attemptNumber, {
+          attemptNumber: s.attemptNumber,
+          submissionId: s.submissionId,
+          when: s.when,
+          verdict: `${verdictBadge} ${s.verdict}`,
+          time: s.time || "0 ms",
+          memory: s.memory || "0 KB",
+          language: s.language,
+          filename: fName
+        });
+      }
+    });
   }
 
+  // 3. Inject latest current attempt
+  if (data.latestAttemptInject) {
+    const inj = data.latestAttemptInject;
+    const isAC = inj.verdictAbbr === "AC";
+    const verdictBadge = isAC ? "✅" : "❌";
+
+    historyMap.set(inj.attemptNumber, {
+      attemptNumber: inj.attemptNumber,
+      submissionId: inj.submissionId,
+      when: inj.when,
+      verdict: `${verdictBadge} ${inj.verdict}`,
+      time: inj.time || "0 ms",
+      memory: inj.memory || "0 KB",
+      language: inj.language,
+      filename: inj.filename
+    });
+  }
+
+  const sortedHistory = Array.from(historyMap.values()).sort((a, b) => a.attemptNumber - b.attemptNumber);
+
+  // 4. Build Clean Markdown Table
+  const tableHeader = `| Attempt | Submission ID | Date & Time | Verdict | Runtime | Memory | Language | Solution File |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |`;
+
+  const tableRows = sortedHistory
+    .map((s) => {
+      const fName = s.filename || `${s.submissionId}_Attempt_${s.attemptNumber}_AC.txt`;
+      return `| ${s.attemptNumber} | ${s.submissionId || "N/A"} | ${s.when} | ${s.verdict} | ${s.time || "0 ms"} | ${s.memory || "0 KB"} | ${s.language || "N/A"} | [\`${fName}\`](./${fName}) |`;
+    })
+    .join("\n");
+
   const probDetails = data.problemDetails || {};
+  const problemUrl = probDetails.url || "#";
 
-  const readmeContent = `# [${cleanTitle}]
+  const pName = platform.toLowerCase();
+  const isSimpleHeader = pName === "geeksforgeeks" || pName === "leetcode" || pName === "codekata";
 
-**Platform:** ${platform}
-**Limits:** ${probDetails.timeLimit || "N/A"} | ${probDetails.memoryLimit || "N/A"}
-**Link:** [Problem Statement](${probDetails.url || "#"})
+  const limitsInfo = (!isSimpleHeader && probDetails.timeLimit && probDetails.timeLimit !== "N/A")
+    ? ` | **Time Limit:** \`${probDetails.timeLimit}\` | **Memory Limit:** \`${probDetails.memoryLimit || "N/A"}\``
+    : "";
 
----
+  let inputBlock = "";
+  if (probDetails.inputSpec && probDetails.inputSpec.trim()) {
+    inputBlock = `---
 
-### 📝 Problem Statement
-${probDetails.statementParagraphs || "No statement captured."}
+### 📥 Input Specification
+${probDetails.inputSpec.trim()}
+`;
+  }
 
----
+  let outputBlock = "";
+  if (probDetails.outputSpec && probDetails.outputSpec.trim()) {
+    outputBlock = `---
 
-### 📥 Input / Output Specification
-**Input:** ${probDetails.inputSpec || "Standard Input"}
-**Output:** ${probDetails.outputSpec || "Standard Output"}
+### 📤 Output Specification
+${probDetails.outputSpec.trim()}
+`;
+  }
 
----
+  let sampleBlock = "";
+  if (probDetails.sampleTests && probDetails.sampleTests.length > 0) {
+    sampleBlock = `---
 
 ### 🧪 Sample Tests
-${
-  probDetails.sampleTests && probDetails.sampleTests.length > 0
-    ? probDetails.sampleTests
-        .map(
-          (t, i) => `
+` + probDetails.sampleTests
+      .map(
+        (t, i) => `
 #### Example ${i + 1}
 **Input:**
-\`\`\`
+\`\`\`text
 ${t.input}
 \`\`\`
+
 **Output:**
-\`\`\`
+\`\`\`text
 ${t.output}
 \`\`\`
 `
-        )
-        .join("\n")
-    : "_No sample test cases provided._"
-}
+      )
+      .join("\n");
+  }
 
-${probDetails.note ? `--- \n### 💡 Note\n${probDetails.note}\n` : ""}
+  let noteBlock = "";
+  if (probDetails.note && probDetails.note.trim()) {
+    noteBlock = `---
 
+### 💡 Note
+${probDetails.note.trim()}
+`;
+  }
+
+  const readmeContent = `# [${cleanTitle}](${problemUrl})
+
+> **Platform:** \`${platform}\`${limitsInfo}  
+> **Direct Link:** [Open Problem Statement](${problemUrl})
+
+---
+
+### 📖 Problem Statement
+${probDetails.statementParagraphs || "No statement captured."}
+
+${inputBlock}
+${outputBlock}
+${sampleBlock}
+${noteBlock}
 ---
 
 ### 📊 Submission History
@@ -361,7 +405,7 @@ ${tableHeader}
 ${tableRows}
 `;
 
-  const encodedReadme = btoa(unescape(encodeURIComponent(readmeContent)));
+  const encodedReadme = utf8ToBase64(readmeContent);
 
   await fetch(`https://api.github.com/repos/${repo}/contents/${readmePath}`, {
     method: "PUT",
@@ -470,10 +514,10 @@ ${platformList
       existingRoot = await res.json();
     }
   } catch (e) {
-    console.log("Root README.md does not exist yet.");
+    // Root README doesn't exist yet
   }
 
-  const encodedRoot = btoa(unescape(encodeURIComponent(rootReadmeContent)));
+  const encodedRoot = utf8ToBase64(rootReadmeContent);
 
   await fetch(`https://api.github.com/repos/${repo}/contents/${rootPath}`, {
     method: "PUT",

@@ -10,7 +10,6 @@ function sanitizePathSegment(segment) {
 
 function getCodeChefUrlSubpath() {
   let path = window.location.pathname;
-
   path = path
     .replace(/^\/+|\/+$/g, "")
     .replace(/\/submit.*$/i, "")
@@ -24,19 +23,68 @@ function getCodeChefUrlSubpath() {
   return segments.join("/");
 }
 
+function cleanMathAndFormatting(element) {
+  if (!element) return "";
+  const clone = element.cloneNode(true);
+
+  // 1. Convert KaTeX / MathJax equations
+  const katexMath = clone.querySelectorAll(".katex");
+  katexMath.forEach((k) => {
+    const annotation = k.querySelector("annotation[encoding='application/x-tex']");
+    if (annotation && annotation.textContent) {
+      k.replaceWith(`$${annotation.textContent.trim()}$`);
+    } else {
+      k.replaceWith(k.textContent.trim());
+    }
+  });
+
+  // 2. Format inline elements
+  clone.querySelectorAll("b, strong").forEach((el) => {
+    const t = el.textContent.trim();
+    if (t) el.replaceWith(`**${t}**`);
+  });
+
+  clone.querySelectorAll("tt, code").forEach((el) => {
+    const t = el.textContent.trim();
+    if (t) el.replaceWith(`\`${t}\``);
+  });
+
+  clone.querySelectorAll("sub").forEach((el) => {
+    const t = el.textContent.trim();
+    if (t) el.replaceWith(`_${t}`);
+  });
+
+  clone.querySelectorAll("sup").forEach((el) => {
+    const t = el.textContent.trim();
+    if (t) el.replaceWith(`^${t}`);
+  });
+
+  return clone.textContent.trim();
+}
+
 function extractAndSaveCodeChefProblemDetails() {
-  const container = document.querySelector("._problemStatementWrapper_bh3c4_33") ||
-                    document.querySelector("._problemBodyContent_bh3c4_71") ||
-                    document.getElementById("problem-statement");
+  const contentWrapper =
+    document.querySelector("._problemBodyContent_bh3c4_71") ||
+    document.getElementById("problem-statement") ||
+    document.querySelector("._problemStatementWrapper_bh3c4_33");
 
-  if (!container) return;
+  if (!contentWrapper) return;
 
-  // 1. EXTRACT TITLE (First h3 inside wrapper, excluding "Sample")
+  // 1. EXTRACT TITLE
   let title = "";
-  const h3s = container.querySelectorAll("h3");
-  for (const h3 of h3s) {
+  const h3List = contentWrapper.querySelectorAll("h3");
+  for (const h3 of h3List) {
     const text = h3.textContent.trim();
-    if (text && !text.toLowerCase().includes("sample")) {
+    const lower = text.toLowerCase();
+    if (
+      text &&
+      !lower.includes("sample") &&
+      !lower.includes("input") &&
+      !lower.includes("output") &&
+      !lower.includes("constraint") &&
+      !lower.includes("subtask") &&
+      !lower.includes("explanation")
+    ) {
       title = text;
       break;
     }
@@ -46,71 +94,123 @@ function extractAndSaveCodeChefProblemDetails() {
     title = document.title.replace("- CodeChef", "").replace("Practice Problem in Java", "").trim();
   }
 
-  // 2. EXTRACT PROBLEM STATEMENT PARAGRAPHS
-  // Target paragraphs directly inside _problemBodyContent_bh3c4_71
-  const bodyContent = container.querySelector("._problemBodyContent_bh3c4_71") || container;
-  const pElements = bodyContent.querySelectorAll("p");
-  
-  const paragraphs = [];
-  pElements.forEach((p) => {
-    const txt = p.textContent.trim();
-    // Exclude empty paragraphs or sample table child tags
-    if (txt && !p.closest("._input_output__table_bh3c4_231")) {
-      paragraphs.push(txt);
-    }
-  });
-
-  const statementText = paragraphs.length > 0
-    ? paragraphs.join("\n\n")
-    : "Write a program to solve the problem as described on CodeChef.";
-
-  // 3. EXTRACT SAMPLE TEST CASES FROM _input_output__table
+  // 2. EXTRACT SECTIONS ITERATIVELY FROM DOM
+  let inputSpec = "";
+  let outputSpec = "";
+  const statementParts = [];
   const sampleTests = [];
-  const tables = container.querySelectorAll("._input_output__table_bh3c4_231, [class*='input_output__table']");
 
-  tables.forEach((tbl) => {
-    const valuesContainer = tbl.querySelector("._values__container_bh3c4_254") || tbl;
-    const pres = valuesContainer.querySelectorAll("pre");
+  let currentSection = "statement"; // 'statement' | 'input' | 'output' | 'ignore'
 
-    if (pres.length >= 2) {
-      let inputVal = pres[0].textContent.trim();
-      let outputVal = pres[1].textContent.trim();
+  const children = Array.from(contentWrapper.children);
 
-      if (!inputVal) inputVal = "N/A (No Input Required)";
+  children.forEach((child) => {
+    const tag = child.tagName.toLowerCase();
 
-      if (outputVal) {
-        sampleTests.push({ input: inputVal, output: outputVal });
+    // Check if element is a sample test case table
+    if (
+      child.classList.contains("_input_output__table_bh3c4_231") ||
+      child.querySelector("._values__container_bh3c4_254")
+    ) {
+      const valuesBox = child.querySelector("._values__container_bh3c4_254") || child;
+      const pres = valuesBox.querySelectorAll("pre");
+
+      if (pres.length >= 2) {
+        const inVal = pres[0].textContent.trim() || "N/A (No Input Required)";
+        const outVal = pres[1].textContent.trim();
+        if (outVal) sampleTests.push({ input: inVal, output: outVal });
+      } else if (pres.length === 1) {
+        const outVal = pres[0].textContent.trim();
+        if (outVal) sampleTests.push({ input: "N/A (No Input Required)", output: outVal });
       }
-    } else if (pres.length === 1) {
-      const outputVal = pres[0].textContent.trim();
-      if (outputVal) {
-        sampleTests.push({ input: "N/A (No Input Required)", output: outputVal });
+      return;
+    }
+
+    // Section Headings
+    if (tag === "h3" || tag === "h4") {
+      const hText = child.textContent.trim();
+      const hLower = hText.toLowerCase();
+
+      if (hLower.includes("sample")) {
+        currentSection = "ignore";
+        return;
+      }
+      if (hLower === "input" || hLower.startsWith("input")) {
+        currentSection = "input";
+        return;
+      }
+      if (hLower === "output" || hLower.startsWith("output")) {
+        currentSection = "output";
+        return;
+      }
+      if (hLower.includes("constraint") || hLower.includes("subtask") || hLower.includes("explanation")) {
+        currentSection = "statement";
+        statementParts.push(`\n### ${hText}\n`);
+        return;
+      }
+      if (hText === title) {
+        return; // Skip repeated title
+      }
+
+      currentSection = "statement";
+      statementParts.push(`\n### ${hText}\n`);
+      return;
+    }
+
+    // Unordered / Ordered Lists (e.g. Constraints, Subtasks)
+    if (tag === "ul" || tag === "ol") {
+      const lis = Array.from(child.querySelectorAll("li"));
+      const listMarkdown = lis
+        .map((li) => `- ${cleanMathAndFormatting(li)}`)
+        .filter((t) => t.length > 2)
+        .join("\n");
+
+      if (listMarkdown) {
+        if (currentSection === "input") {
+          inputSpec += (inputSpec ? "\n\n" : "") + listMarkdown;
+        } else if (currentSection === "output") {
+          outputSpec += (outputSpec ? "\n\n" : "") + listMarkdown;
+        } else if (currentSection === "statement") {
+          statementParts.push(listMarkdown);
+        }
+      }
+      return;
+    }
+
+    // Paragraphs and Div Text
+    if (tag === "p" || tag === "div") {
+      const cleaned = cleanMathAndFormatting(child);
+      if (!cleaned || cleaned === "\u00A0") return;
+
+      if (currentSection === "input") {
+        inputSpec += (inputSpec ? "\n\n" : "") + cleaned;
+      } else if (currentSection === "output") {
+        outputSpec += (outputSpec ? "\n\n" : "") + cleaned;
+      } else if (currentSection === "statement") {
+        statementParts.push(cleaned);
       }
     }
   });
 
-  const urlSubpath = getCodeChefUrlSubpath();
+  const fullStatement = statementParts.join("\n\n").trim();
 
   const problemData = {
     url: window.location.href,
     title: title || "CodeChef Problem",
-    urlSubpath: urlSubpath,
+    urlSubpath: getCodeChefUrlSubpath(),
     timeLimit: "N/A",
     memoryLimit: "N/A",
-    statementParagraphs: statementText,
-    inputSpec: "Standard Input",
-    outputSpec: "Standard Output",
+    statementParagraphs: fullStatement || "Write a program to solve the problem as described on CodeChef.",
+    inputSpec: inputSpec || "Standard Input",
+    outputSpec: outputSpec || "Standard Output",
     sampleTests: sampleTests,
     note: "",
     updatedAt: new Date().toISOString()
   };
 
-  chrome.storage.local.set({ current_problem: problemData }, () => {
-    console.log("[CP-GitSync] Captured CodeChef Details -> Title:", title, "| Samples:", sampleTests.length);
-  });
+  chrome.storage.local.set({ current_problem: problemData });
 }
 
-// Initial capture with polling retries for SPA rendering
 extractAndSaveCodeChefProblemDetails();
 setTimeout(extractAndSaveCodeChefProblemDetails, 1000);
 setTimeout(extractAndSaveCodeChefProblemDetails, 2500);

@@ -1,17 +1,15 @@
-function showUIWarning(msg) {
-  const toast = document.createElement("div");
-  toast.className = "cf-sync-toast warning";
-  toast.innerText = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
-}
+// src/platforms/atcoder/status.js
 
 function showUISuccess(msg) {
-  const toast = document.createElement("div");
-  toast.className = "cf-sync-toast success";
-  toast.innerText = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+  if (typeof showCPToast === "function") {
+    showCPToast(msg, "success");
+  } else {
+    const toast = document.createElement("div");
+    toast.className = "cf-sync-toast success";
+    toast.innerText = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+  }
 }
 
 function verifyDOMStructure() {
@@ -19,8 +17,8 @@ function verifyDOMStructure() {
   if (!isStatusPage) return;
 
   const table = document.querySelector("table.table");
-  if (!table) {
-    console.error("[CP-GitSync Diagnostic] Missing status table on AtCoder!");
+  if (!table && typeof notifyDOMChanged === "function") {
+    notifyDOMChanged("AtCoder", "Submissions Table");
   }
 }
 
@@ -111,7 +109,6 @@ function trackVerdictCompletion() {
 
       const currentSubRecord = extractedSubmissions.find((s) => s.submissionId === latestSubId) || extractedSubmissions[extractedSubmissions.length - 1];
 
-      // Extract contest short code directly from problem data or current URL
       let contestName = problem.contestName || "";
       if (!contestName) {
         const match = window.location.pathname.match(/\/contests\/([^/]+)/i);
@@ -121,7 +118,7 @@ function trackVerdictCompletion() {
       const fullRecord = {
         platform: "AtCoder",
         submissionId: latestSubId,
-        contestName: contestName, // Added contest short code into background queue payload!
+        contestName: contestName,
         attemptNumber: currentSubRecord ? currentSubRecord.attemptNumber : extractedSubmissions.length,
         when: currentSubRecord ? currentSubRecord.when : "",
         problemName: targetProblemName || problem.title || "Unknown Problem",

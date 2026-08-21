@@ -1,156 +1,146 @@
 // src/platforms/codechef/status.js
 
-function showUISuccess(msg) {
-  const toast = document.createElement("div");
-  toast.className = "cf-sync-toast success";
-  toast.innerText = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
+function isExtensionValid() {
+  return typeof chrome !== "undefined" && chrome.runtime && !!chrome.runtime.id;
 }
 
-function extractCodeChefVerdict() {
-  // 1. DIRECT CHECK FOR CODECHEF SUBTASK TABLE & RESULTS
+function extractVerdictFromRunTab() {
+  const runContainer =
+    document.querySelector("._run-result_1xnpw_2") ||
+    document.querySelector("._runTab_yibw2_566") ||
+    document.querySelector("._ide-execute__wrapper_r2w6z_20") ||
+    document.body;
+
+  if (!runContainer) return null;
+
+  const fullText = runContainer.textContent.toLowerCase();
+
+  // In-progress evaluation states
+  if (
+    fullText.includes("running...") ||
+    fullText.includes("judging...") ||
+    fullText.includes("evaluating...") ||
+    fullText.includes("compiling...")
+  ) {
+    return null;
+  }
+
+  // 1. Direct check on status container label / header
+  const statusLabel = document.querySelector(
+    "._status__container_1xnpw_48 span, ._status__container_1xnpw_48, ._run__container_1xnpw_42, [class*='status-error']"
+  );
+  if (statusLabel) {
+    const labelText = statusLabel.textContent.trim().toLowerCase();
+    if (
+      labelText.includes("runtime error") ||
+      labelText.includes("run time error") ||
+      labelText.includes("sigsegv") ||
+      labelText.includes("nzec") ||
+      labelText.includes("sigabrt")
+    ) {
+      return "Runtime Error";
+    }
+    if (labelText.includes("compilation error") || labelText.includes("compile error")) {
+      return "Compilation Error";
+    }
+    if (labelText.includes("time limit") || labelText.includes("tle")) {
+      return "Time Limit Exceeded";
+    }
+    if (labelText.includes("wrong answer")) return "Wrong Answer";
+    if (labelText.includes("correct") || labelText.includes("accepted")) return "Accepted";
+  }
+
+  // 2. Subtask Table Evaluation
   const statusTable = document.querySelector(".status-table");
   if (statusTable) {
     const tableText = statusTable.textContent.toLowerCase();
-
-    // Check for 100% / Correct
-    if (
-      tableText.includes("subtask score: 100%") ||
-      tableText.includes("total score = 100%") ||
-      tableText.includes("result - correct") ||
-      tableText.includes("correct")
-    ) {
+    if (tableText.includes("total score = 100%") || tableText.includes("subtask score: 100%")) {
       return "Accepted";
     }
-
-    if (tableText.includes("wrong") || tableText.includes("subtask score: 0%")) {
-      return "Wrong Answer";
-    }
-  }
-
-  // 2. BROAD QUERY ACROSS THE PAGE FOR OTHER VERDICTS
-  const candidateNodes = document.querySelectorAll(
-    "[class*='status'], [class*='verdict'], [class*='result'], [class*='subtask'], .status-table, h2, h3, h4, span, td, strong"
-  );
-
-  for (const node of candidateNodes) {
-    if (!node || !node.textContent) continue;
-
-    // Skip generic top-level containers
-    if (node.children.length > 5) continue;
-
-    const txt = node.textContent.trim().toLowerCase();
-
-    // Ignore ongoing evaluation states
     if (
-      txt === "running" ||
-      txt === "compiling" ||
-      txt === "queued" ||
-      txt === "evaluating" ||
-      txt.includes("running...") ||
-      txt.includes("compiling...")
+      tableText.includes("run time error") ||
+      tableText.includes("runtime error") ||
+      tableText.includes("nzec") ||
+      tableText.includes("sigsegv")
     ) {
-      return null; // Evaluation in progress
+      return "Runtime Error";
     }
-
-    // Match Accepted
-    if (
-      txt === "correct" ||
-      txt === "correct answer" ||
-      txt === "accepted" ||
-      txt.includes("result - correct") ||
-      txt.includes("subtask score: 100%") ||
-      txt.includes("total score = 100%") ||
-      txt.includes("100/100") ||
-      txt.includes("100 pts")
-    ) {
-      return "Accepted";
-    }
-
-    // Match Failures
-    if (txt === "wrong answer" || txt.includes("wrong answer")) {
-      return "Wrong Answer";
-    }
-    if (txt.includes("time limit") || txt === "tle") {
-      return "Time Limit Exceeded";
-    }
-    if (txt.includes("compilation error") || txt.includes("compile error")) {
+    if (tableText.includes("compile error") || tableText.includes("compilation error")) {
       return "Compilation Error";
     }
-    if (txt.includes("runtime error") || txt === "rte") {
-      return "Runtime Error";
+    if (tableText.includes("time limit") || tableText.includes("tle")) {
+      return "Time Limit Exceeded";
+    }
+    if (tableText.includes("wrong answer") || tableText.includes("total score = 0%")) {
+      return "Wrong Answer";
     }
   }
 
   return null;
 }
 
-const processedSubmissionIds = new Set();
-let isCurrentlySyncing = false;
+let isSyncing = false;
 
-function trackCodeChefVerdictCompletion() {
-  const targetNode = document.body;
-  if (!targetNode) return;
-
-  const observer = new MutationObserver(() => {
-    if (isCurrentlySyncing) return;
-
-    const finalVerdict = extractCodeChefVerdict();
-    if (!finalVerdict) return;
+function observeCodeChefExecution() {
+  const checkVerdict = () => {
+    if (!isExtensionValid() || isSyncing) return;
 
     chrome.storage.local.get(
-      ["pending_submission", "current_problem", "all_submissions", "codechef_verdict_processed"],
+      ["codechef_active_submission", "codechef_pending_verdict", "current_problem", "all_submissions"],
       (res) => {
-        const pending = res.pending_submission || {};
-        const subId = pending.submissionId || `cc_${pending.timestamp || Date.now()}`;
+        if (!isExtensionValid()) return;
+        if (!res.codechef_pending_verdict || !res.codechef_active_submission) return;
 
-        if (res.codechef_verdict_processed || processedSubmissionIds.has(subId) || isCurrentlySyncing) {
-          return;
-        }
+        const finalVerdict = extractVerdictFromRunTab();
+        if (!finalVerdict) return;
 
-        // SYNCHRONOUS LOCK
-        isCurrentlySyncing = true;
-        processedSubmissionIds.add(subId);
+        isSyncing = true;
+        const pending = res.codechef_active_submission;
+        const problem = res.current_problem || {};
+        const history = res.all_submissions || [];
 
-        chrome.storage.local.set({ codechef_verdict_processed: true }, () => {
-          const problem = res.current_problem || {};
-          const history = res.all_submissions || [];
+        // Clear active state immediately
+        chrome.storage.local.set(
+          {
+            codechef_pending_verdict: false,
+            codechef_active_submission: null
+          },
+          () => {
+            const fullRecord = {
+              platform: "CodeChef",
+              submissionId: pending.submissionId,
+              urlSubpath: problem.urlSubpath || "",
+              problemName: problem.title || "CodeChef Problem",
+              language: pending.language || "Java",
+              verdict: finalVerdict,
+              sourceCode: pending.sourceCode || "// Captured from CodeChef",
+              problemDetails: problem,
+              capturedAt: new Date().toISOString()
+            };
 
-          const fullRecord = {
-            platform: "CodeChef",
-            submissionId: subId,
-            urlSubpath: problem.urlSubpath || "",
-            problemName: problem.title || "Unknown Problem",
-            language: pending.language || "Source Code",
-            verdict: finalVerdict,
-            sourceCode: pending.sourceCode || "// Captured from CodeChef",
-            problemDetails: problem,
-            capturedAt: new Date().toISOString()
-          };
+            console.log("[CP-GitSync] Synced CodeChef Attempt:", finalVerdict, "Lang:", pending.language);
 
-          console.log("[CP-GitSync] Extracted Final CodeChef Verdict:", finalVerdict, "ID:", subId);
+            history.push(fullRecord);
+            chrome.storage.local.set({ all_submissions: history }, () => {
+              chrome.runtime.sendMessage({ action: "SYNC_TO_GITHUB", data: fullRecord });
 
-          history.push(fullRecord);
-          chrome.storage.local.set({ all_submissions: history }, () => {
-            chrome.runtime.sendMessage({ action: "SYNC_TO_GITHUB", data: fullRecord });
-
-            setTimeout(() => {
-              isCurrentlySyncing = false;
-            }, 1500);
-          });
-        });
+              setTimeout(() => {
+                isSyncing = false;
+              }, 2500);
+            });
+          }
+        );
       }
     );
-  });
+  };
 
-  observer.observe(targetNode, { childList: true, subtree: true, characterData: true });
+  const observer = new MutationObserver(() => checkVerdict());
+  const target = document.body;
+  if (target) {
+    observer.observe(target, { childList: true, subtree: true, characterData: true });
+  }
+
+  setInterval(checkVerdict, 800);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "SYNC_SUCCESS") {
-    showUISuccess("Successfully synced CodeChef submission to GitHub!");
-  }
-});
-
-trackCodeChefVerdictCompletion();
+observeCodeChefExecution();
